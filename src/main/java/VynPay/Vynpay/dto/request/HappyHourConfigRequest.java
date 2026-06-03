@@ -15,6 +15,9 @@ public class HappyHourConfigRequest {
 
     private LocalTime endTime;
 
+    // 🔥 NOVO: Dias da semana (ex: ["MON", "TUE", "WED", "THU", "FRI"])
+    private List<String> daysOfWeek;
+
     @NotEmpty(message = "Selecione pelo menos um produto")
     private List<Long> productIds;
 }

@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Data
@@ -32,6 +33,10 @@ public class HappyHourConfig {
     @Column(name = "end_time")
     private LocalTime endTime;
 
+    // 🔥 NOVO: Dias da semana (ex: "MON,TUE,WED,THU,FRI")
+    @Column(name = "days_of_week", length = 50)
+    private String daysOfWeek;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id")
     private Company company;
@@ -54,5 +59,21 @@ public class HappyHourConfig {
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    // 🔥 Métodos auxiliares para dias da semana
+    public List<String> getDaysOfWeekList() {
+        if (daysOfWeek == null || daysOfWeek.isEmpty()) {
+            return null;
+        }
+        return Arrays.asList(daysOfWeek.split(","));
+    }
+
+    public void setDaysOfWeekList(List<String> days) {
+        if (days == null || days.isEmpty()) {
+            this.daysOfWeek = null;
+        } else {
+            this.daysOfWeek = String.join(",", days);
+        }
     }
 }

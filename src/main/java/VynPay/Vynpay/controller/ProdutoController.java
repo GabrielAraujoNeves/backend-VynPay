@@ -2,11 +2,13 @@ package VynPay.Vynpay.controller;
 
 import VynPay.Vynpay.dto.request.CategoriaRequest;
 import VynPay.Vynpay.dto.request.ProdutoRequest;
-import VynPay.Vynpay.dto.response.ProdutoResponse;
 import VynPay.Vynpay.dto.response.CategoriaResponse;
+import VynPay.Vynpay.dto.response.HappyHourConfigResponse;
+import VynPay.Vynpay.dto.response.ProdutoResponse;
 import VynPay.Vynpay.model.CategoriaProduto;
 import VynPay.Vynpay.model.Produto;
 import VynPay.Vynpay.model.usuario;
+import VynPay.Vynpay.service.HappyHourService;
 import VynPay.Vynpay.service.ProdutoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -15,6 +17,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +32,9 @@ public class ProdutoController {
 
     @Autowired
     private ProdutoService produtoService;
+
+    @Autowired
+    private HappyHourService happyHourService;
 
     // ========== CATEGORIAS ==========
 
@@ -57,13 +65,11 @@ public class ProdutoController {
         }
     }
 
-    // Listar categorias (sem dados da empresa)
     @GetMapping("/categorias")
     public ResponseEntity<?> listarCategorias(@AuthenticationPrincipal usuario admin) {
         try {
             List<CategoriaProduto> categorias = produtoService.listarCategorias(admin.getCompany().getId());
 
-            // Converter para resposta customizada sem empresa
             List<CategoriaResponse> categoriasResponse = categorias.stream().map(cat -> {
                 CategoriaResponse response = new CategoriaResponse();
                 response.setId(cat.getId());
@@ -86,7 +92,6 @@ public class ProdutoController {
         }
     }
 
-    // Buscar categoria por ID (sem dados da empresa)
     @GetMapping("/categorias/{categoriaId}")
     public ResponseEntity<?> buscarCategoriaPorId(
             @AuthenticationPrincipal usuario admin,
@@ -110,7 +115,6 @@ public class ProdutoController {
         }
     }
 
-    // Atualizar categoria (apenas ADMIN)
     @PutMapping("/categorias/{categoriaId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> atualizarCategoria(
@@ -140,7 +144,6 @@ public class ProdutoController {
         }
     }
 
-    // Deletar categoria (apenas ADMIN)
     @DeleteMapping("/categorias/{categoriaId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deletarCategoria(
@@ -163,7 +166,6 @@ public class ProdutoController {
 
     // ========== PRODUTOS ==========
 
-    // Criar produto (apenas ADMIN)
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> criarProduto(
@@ -196,38 +198,77 @@ public class ProdutoController {
         }
     }
 
-    // Listar todos os produtos (com categoria, sem empresa)
+    // 🔥 LISTAR PRODUTOS - INTEGRADO COM HAPPY HOUR
     @GetMapping
     public ResponseEntity<?> listarProdutos(@AuthenticationPrincipal usuario admin) {
         try {
             List<Produto> produtos = produtoService.listarProdutos(admin.getCompany().getId());
+            HappyHourConfigResponse activeConfig = happyHourService.getActiveConfig(admin.getCompany());
 
-            // Converter para resposta customizada
-            List<ProdutoResponse> produtosResponse = produtos.stream().map(produto -> {
-                ProdutoResponse response = new ProdutoResponse();
-                response.setId(produto.getId());
-                response.setNome(produto.getNome());
-                response.setDescricao(produto.getDescricao());
-                response.setPreco(produto.getPreco());
-                response.setQuantidade(produto.getQuantidade());
-                response.setCreatedAt(produto.getCreatedAt());
-                response.setUpdatedAt(produto.getUpdatedAt());
+            // Verificar se Happy Hour está ativo
+            boolean isHappyHourActive = false;
+            Double descontoGlobal = 0.0;
 
-                if (produto.getCategoria() != null) {
-                    ProdutoResponse.CategoriaInfo categoriaInfo = new ProdutoResponse.CategoriaInfo(
-                            produto.getCategoria().getId(),
-                            produto.getCategoria().getNome(),
-                            produto.getCategoria().getDescricao()
-                    );
-                    response.setCategoria(categoriaInfo);
+            if (activeConfig != null && activeConfig.getIsActive()) {
+                isHappyHourActive = isWithinTimeRange(activeConfig);
+                if (isHappyHourActive) {
+                    descontoGlobal = activeConfig.getDiscountPercent();
+                }
+            }
+
+            final Double descontoFinal = descontoGlobal;
+            final boolean happyHourAtivo = isHappyHourActive;
+            final HappyHourConfigResponse configFinal = activeConfig;
+
+            List<Map<String, Object>> produtosResponse = produtos.stream().map(produto -> {
+                Map<String, Object> produtoMap = new HashMap<>();
+                produtoMap.put("id", produto.getId());
+                produtoMap.put("nome", produto.getNome());
+                produtoMap.put("descricao", produto.getDescricao());
+                produtoMap.put("quantidade", produto.getQuantidade());
+                produtoMap.put("createdAt", produto.getCreatedAt());
+                produtoMap.put("updatedAt", produto.getUpdatedAt());
+
+                // Verificar se este produto específico está no Happy Hour
+                boolean produtoEmPromocao = false;
+                BigDecimal precoFinal = produto.getPreco();
+                Double descontoAplicado = 0.0;
+
+                if (happyHourAtivo && configFinal != null) {
+                    produtoEmPromocao = happyHourService.isProductInHappyHour(configFinal, produto.getId());
+                    if (produtoEmPromocao) {
+                        descontoAplicado = descontoFinal;
+                        BigDecimal desconto = produto.getPreco()
+                                .multiply(BigDecimal.valueOf(descontoAplicado / 100));
+                        precoFinal = produto.getPreco().subtract(desconto)
+                                .setScale(2, RoundingMode.HALF_UP);
+                    }
                 }
 
-                return response;
+                produtoMap.put("preco", precoFinal);
+                produtoMap.put("precoOriginal", produto.getPreco());
+                produtoMap.put("descontoPercent", produtoEmPromocao ? descontoAplicado : 0.0);
+                produtoMap.put("isInHappyHour", produtoEmPromocao);
+
+                if (produto.getCategoria() != null) {
+                    Map<String, Object> categoriaInfo = new HashMap<>();
+                    categoriaInfo.put("id", produto.getCategoria().getId());
+                    categoriaInfo.put("nome", produto.getCategoria().getNome());
+                    categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                    produtoMap.put("categoria", categoriaInfo);
+                }
+
+                return produtoMap;
             }).collect(Collectors.toList());
 
             Map<String, Object> response = new HashMap<>();
             response.put("total", produtosResponse.size());
             response.put("produtos", produtosResponse);
+            response.put("isHappyHourActive", happyHourAtivo);
+
+            if (happyHourAtivo) {
+                response.put("happyHourMessage", " HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! ");
+            }
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -237,7 +278,6 @@ public class ProdutoController {
         }
     }
 
-    // Listar produtos por categoria (com categoria, sem empresa)
     @GetMapping("/categoria/{categoriaId}")
     public ResponseEntity<?> listarProdutosPorCategoria(
             @AuthenticationPrincipal usuario admin,
@@ -245,33 +285,70 @@ public class ProdutoController {
     ) {
         try {
             List<Produto> produtos = produtoService.listarProdutosPorCategoria(categoriaId, admin.getCompany().getId());
+            HappyHourConfigResponse activeConfig = happyHourService.getActiveConfig(admin.getCompany());
 
-            // Converter para resposta customizada
-            List<ProdutoResponse> produtosResponse = produtos.stream().map(produto -> {
-                ProdutoResponse response = new ProdutoResponse();
-                response.setId(produto.getId());
-                response.setNome(produto.getNome());
-                response.setDescricao(produto.getDescricao());
-                response.setPreco(produto.getPreco());
-                response.setQuantidade(produto.getQuantidade());
-                response.setCreatedAt(produto.getCreatedAt());
-                response.setUpdatedAt(produto.getUpdatedAt());
+            boolean isHappyHourActive = false;
+            Double descontoGlobal = 0.0;
 
-                if (produto.getCategoria() != null) {
-                    ProdutoResponse.CategoriaInfo categoriaInfo = new ProdutoResponse.CategoriaInfo(
-                            produto.getCategoria().getId(),
-                            produto.getCategoria().getNome(),
-                            produto.getCategoria().getDescricao()
-                    );
-                    response.setCategoria(categoriaInfo);
+            if (activeConfig != null && activeConfig.getIsActive()) {
+                isHappyHourActive = isWithinTimeRange(activeConfig);
+                if (isHappyHourActive) {
+                    descontoGlobal = activeConfig.getDiscountPercent();
+                }
+            }
+
+            final Double descontoFinal = descontoGlobal;
+            final boolean happyHourAtivo = isHappyHourActive;
+            final HappyHourConfigResponse configFinal = activeConfig;
+
+            List<Map<String, Object>> produtosResponse = produtos.stream().map(produto -> {
+                Map<String, Object> produtoMap = new HashMap<>();
+                produtoMap.put("id", produto.getId());
+                produtoMap.put("nome", produto.getNome());
+                produtoMap.put("descricao", produto.getDescricao());
+                produtoMap.put("quantidade", produto.getQuantidade());
+                produtoMap.put("createdAt", produto.getCreatedAt());
+                produtoMap.put("updatedAt", produto.getUpdatedAt());
+
+                boolean produtoEmPromocao = false;
+                BigDecimal precoFinal = produto.getPreco();
+                Double descontoAplicado = 0.0;
+
+                if (happyHourAtivo && configFinal != null) {
+                    produtoEmPromocao = happyHourService.isProductInHappyHour(configFinal, produto.getId());
+                    if (produtoEmPromocao) {
+                        descontoAplicado = descontoFinal;
+                        BigDecimal desconto = produto.getPreco()
+                                .multiply(BigDecimal.valueOf(descontoAplicado / 100));
+                        precoFinal = produto.getPreco().subtract(desconto)
+                                .setScale(2, RoundingMode.HALF_UP);
+                    }
                 }
 
-                return response;
+                produtoMap.put("preco", precoFinal);
+                produtoMap.put("precoOriginal", produto.getPreco());
+                produtoMap.put("descontoPercent", produtoEmPromocao ? descontoAplicado : 0.0);
+                produtoMap.put("isInHappyHour", produtoEmPromocao);
+
+                if (produto.getCategoria() != null) {
+                    Map<String, Object> categoriaInfo = new HashMap<>();
+                    categoriaInfo.put("id", produto.getCategoria().getId());
+                    categoriaInfo.put("nome", produto.getCategoria().getNome());
+                    categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                    produtoMap.put("categoria", categoriaInfo);
+                }
+
+                return produtoMap;
             }).collect(Collectors.toList());
 
             Map<String, Object> response = new HashMap<>();
             response.put("total", produtosResponse.size());
             response.put("produtos", produtosResponse);
+            response.put("isHappyHourActive", happyHourAtivo);
+
+            if (happyHourAtivo) {
+                response.put("happyHourMessage", "HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! ");
+            }
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -281,7 +358,6 @@ public class ProdutoController {
         }
     }
 
-    // Buscar produto por ID (com categoria, sem empresa)
     @GetMapping("/{produtoId}")
     public ResponseEntity<?> buscarProdutoPorId(
             @AuthenticationPrincipal usuario admin,
@@ -289,23 +365,52 @@ public class ProdutoController {
     ) {
         try {
             Produto produto = produtoService.buscarProdutoPorId(produtoId, admin.getCompany().getId());
+            HappyHourConfigResponse activeConfig = happyHourService.getActiveConfig(admin.getCompany());
 
-            ProdutoResponse response = new ProdutoResponse();
-            response.setId(produto.getId());
-            response.setNome(produto.getNome());
-            response.setDescricao(produto.getDescricao());
-            response.setPreco(produto.getPreco());
-            response.setQuantidade(produto.getQuantidade());
-            response.setCreatedAt(produto.getCreatedAt());
-            response.setUpdatedAt(produto.getUpdatedAt());
+            boolean isHappyHourActive = false;
+            Double descontoGlobal = 0.0;
+
+            if (activeConfig != null && activeConfig.getIsActive()) {
+                isHappyHourActive = isWithinTimeRange(activeConfig);
+                if (isHappyHourActive) {
+                    descontoGlobal = activeConfig.getDiscountPercent();
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", produto.getId());
+            response.put("nome", produto.getNome());
+            response.put("descricao", produto.getDescricao());
+            response.put("quantidade", produto.getQuantidade());
+            response.put("createdAt", produto.getCreatedAt());
+            response.put("updatedAt", produto.getUpdatedAt());
+
+            boolean produtoEmPromocao = false;
+            BigDecimal precoFinal = produto.getPreco();
+            Double descontoAplicado = 0.0;
+
+            if (isHappyHourActive && activeConfig != null) {
+                produtoEmPromocao = happyHourService.isProductInHappyHour(activeConfig, produto.getId());
+                if (produtoEmPromocao) {
+                    descontoAplicado = descontoGlobal;
+                    BigDecimal desconto = produto.getPreco()
+                            .multiply(BigDecimal.valueOf(descontoAplicado / 100));
+                    precoFinal = produto.getPreco().subtract(desconto)
+                            .setScale(2, RoundingMode.HALF_UP);
+                }
+            }
+
+            response.put("preco", precoFinal);
+            response.put("precoOriginal", produto.getPreco());
+            response.put("descontoPercent", produtoEmPromocao ? descontoAplicado : 0.0);
+            response.put("isInHappyHour", produtoEmPromocao);
 
             if (produto.getCategoria() != null) {
-                ProdutoResponse.CategoriaInfo categoriaInfo = new ProdutoResponse.CategoriaInfo(
-                        produto.getCategoria().getId(),
-                        produto.getCategoria().getNome(),
-                        produto.getCategoria().getDescricao()
-                );
-                response.setCategoria(categoriaInfo);
+                Map<String, Object> categoriaInfo = new HashMap<>();
+                categoriaInfo.put("id", produto.getCategoria().getId());
+                categoriaInfo.put("nome", produto.getCategoria().getNome());
+                categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                response.put("categoria", categoriaInfo);
             }
 
             return ResponseEntity.ok(response);
@@ -316,7 +421,6 @@ public class ProdutoController {
         }
     }
 
-    // Buscar produtos por nome (com categoria, sem empresa)
     @GetMapping("/search")
     public ResponseEntity<?> buscarProdutosPorNome(
             @AuthenticationPrincipal usuario admin,
@@ -324,28 +428,60 @@ public class ProdutoController {
     ) {
         try {
             List<Produto> produtos = produtoService.buscarProdutosPorNome(admin.getCompany().getId(), nome);
+            HappyHourConfigResponse activeConfig = happyHourService.getActiveConfig(admin.getCompany());
 
-            // Converter para resposta customizada
-            List<ProdutoResponse> produtosResponse = produtos.stream().map(produto -> {
-                ProdutoResponse response = new ProdutoResponse();
-                response.setId(produto.getId());
-                response.setNome(produto.getNome());
-                response.setDescricao(produto.getDescricao());
-                response.setPreco(produto.getPreco());
-                response.setQuantidade(produto.getQuantidade());
-                response.setCreatedAt(produto.getCreatedAt());
-                response.setUpdatedAt(produto.getUpdatedAt());
+            boolean isHappyHourActive = false;
+            Double descontoGlobal = 0.0;
 
-                if (produto.getCategoria() != null) {
-                    ProdutoResponse.CategoriaInfo categoriaInfo = new ProdutoResponse.CategoriaInfo(
-                            produto.getCategoria().getId(),
-                            produto.getCategoria().getNome(),
-                            produto.getCategoria().getDescricao()
-                    );
-                    response.setCategoria(categoriaInfo);
+            if (activeConfig != null && activeConfig.getIsActive()) {
+                isHappyHourActive = isWithinTimeRange(activeConfig);
+                if (isHappyHourActive) {
+                    descontoGlobal = activeConfig.getDiscountPercent();
+                }
+            }
+
+            final Double descontoFinal = descontoGlobal;
+            final boolean happyHourAtivo = isHappyHourActive;
+            final HappyHourConfigResponse configFinal = activeConfig;
+
+            List<Map<String, Object>> produtosResponse = produtos.stream().map(produto -> {
+                Map<String, Object> produtoMap = new HashMap<>();
+                produtoMap.put("id", produto.getId());
+                produtoMap.put("nome", produto.getNome());
+                produtoMap.put("descricao", produto.getDescricao());
+                produtoMap.put("quantidade", produto.getQuantidade());
+                produtoMap.put("createdAt", produto.getCreatedAt());
+                produtoMap.put("updatedAt", produto.getUpdatedAt());
+
+                boolean produtoEmPromocao = false;
+                BigDecimal precoFinal = produto.getPreco();
+                Double descontoAplicado = 0.0;
+
+                if (happyHourAtivo && configFinal != null) {
+                    produtoEmPromocao = happyHourService.isProductInHappyHour(configFinal, produto.getId());
+                    if (produtoEmPromocao) {
+                        descontoAplicado = descontoFinal;
+                        BigDecimal desconto = produto.getPreco()
+                                .multiply(BigDecimal.valueOf(descontoAplicado / 100));
+                        precoFinal = produto.getPreco().subtract(desconto)
+                                .setScale(2, RoundingMode.HALF_UP);
+                    }
                 }
 
-                return response;
+                produtoMap.put("preco", precoFinal);
+                produtoMap.put("precoOriginal", produto.getPreco());
+                produtoMap.put("descontoPercent", produtoEmPromocao ? descontoAplicado : 0.0);
+                produtoMap.put("isInHappyHour", produtoEmPromocao);
+
+                if (produto.getCategoria() != null) {
+                    Map<String, Object> categoriaInfo = new HashMap<>();
+                    categoriaInfo.put("id", produto.getCategoria().getId());
+                    categoriaInfo.put("nome", produto.getCategoria().getNome());
+                    categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                    produtoMap.put("categoria", categoriaInfo);
+                }
+
+                return produtoMap;
             }).collect(Collectors.toList());
 
             Map<String, Object> response = new HashMap<>();
@@ -360,8 +496,8 @@ public class ProdutoController {
         }
     }
 
-    // Buscar produtos com estoque baixo (com categoria, sem empresa)
     @GetMapping("/estoque-baixo")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> buscarProdutosEstoqueBaixo(
             @AuthenticationPrincipal usuario admin,
             @RequestParam(defaultValue = "10") Integer minimo
@@ -369,27 +505,24 @@ public class ProdutoController {
         try {
             List<Produto> produtos = produtoService.buscarProdutosEstoqueBaixo(admin.getCompany().getId(), minimo);
 
-            // Converter para resposta customizada
-            List<ProdutoResponse> produtosResponse = produtos.stream().map(produto -> {
-                ProdutoResponse response = new ProdutoResponse();
-                response.setId(produto.getId());
-                response.setNome(produto.getNome());
-                response.setDescricao(produto.getDescricao());
-                response.setPreco(produto.getPreco());
-                response.setQuantidade(produto.getQuantidade());
-                response.setCreatedAt(produto.getCreatedAt());
-                response.setUpdatedAt(produto.getUpdatedAt());
+            List<Map<String, Object>> produtosResponse = produtos.stream().map(produto -> {
+                Map<String, Object> produtoMap = new HashMap<>();
+                produtoMap.put("id", produto.getId());
+                produtoMap.put("nome", produto.getNome());
+                produtoMap.put("descricao", produto.getDescricao());
+                produtoMap.put("preco", produto.getPreco());
+                produtoMap.put("quantidade", produto.getQuantidade());
+                produtoMap.put("createdAt", produto.getCreatedAt());
+                produtoMap.put("updatedAt", produto.getUpdatedAt());
 
                 if (produto.getCategoria() != null) {
-                    ProdutoResponse.CategoriaInfo categoriaInfo = new ProdutoResponse.CategoriaInfo(
-                            produto.getCategoria().getId(),
-                            produto.getCategoria().getNome(),
-                            produto.getCategoria().getDescricao()
-                    );
-                    response.setCategoria(categoriaInfo);
+                    Map<String, Object> categoriaInfo = new HashMap<>();
+                    categoriaInfo.put("id", produto.getCategoria().getId());
+                    categoriaInfo.put("nome", produto.getCategoria().getNome());
+                    categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                    produtoMap.put("categoria", categoriaInfo);
                 }
-
-                return response;
+                return produtoMap;
             }).collect(Collectors.toList());
 
             Map<String, Object> response = new HashMap<>();
@@ -405,7 +538,6 @@ public class ProdutoController {
         }
     }
 
-    // Atualizar produto (apenas ADMIN)
     @PutMapping("/{produtoId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> atualizarProduto(
@@ -440,7 +572,6 @@ public class ProdutoController {
         }
     }
 
-    // Deletar produto (apenas ADMIN)
     @DeleteMapping("/{produtoId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deletarProduto(
@@ -458,6 +589,26 @@ public class ProdutoController {
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    private boolean isWithinTimeRange(HappyHourConfigResponse config) {
+        if (config == null || !config.getIsActive()) {
+            return false;
+        }
+
+        if (config.getStartTime() == null || config.getEndTime() == null) {
+            return true;
+        }
+
+        LocalTime now = LocalTime.now();
+        LocalTime start = config.getStartTime();
+        LocalTime end = config.getEndTime();
+
+        if (start.isBefore(end)) {
+            return !now.isBefore(start) && !now.isAfter(end);
+        } else {
+            return !now.isBefore(start) || !now.isAfter(end);
         }
     }
 }

@@ -13,5 +13,6 @@ public class HappyHourConfigResponse {
     private Double discountPercent;
     private LocalTime startTime;
     private LocalTime endTime;
+    private List<String> daysOfWeek;  // 🔥 NOVO
     private List<HappyHourProductResponse> products;
 }

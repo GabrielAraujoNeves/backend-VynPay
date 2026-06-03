@@ -1,9 +1,12 @@
 package VynPay.Vynpay.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
@@ -14,6 +17,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
+@Slf4j
 @Component
 public class JwtUtil {
 
@@ -55,7 +59,11 @@ public class JwtUtil {
     }
 
     public Boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+        try {
+            return extractExpiration(token).before(new Date());
+        } catch (ExpiredJwtException e) {
+            return true;
+        }
     }
 
     public String generateToken(String email, String role) {
@@ -74,8 +82,62 @@ public class JwtUtil {
                 .compact();
     }
 
+    // 🔥 MÉTODO 1: Validar token com UserDetails (já existente)
     public Boolean validateToken(String token, UserDetails userDetails) {
-        final String email = extractEmail(token);
-        return (email.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        try {
+            final String email = extractEmail(token);
+            return (email.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        } catch (ExpiredJwtException e) {
+            log.warn("Token expirado: {}", e.getMessage());
+            return false;
+        } catch (JwtException e) {
+            log.warn("Token inválido: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // 🔥 MÉTODO 2: Validar token sozinho (sem UserDetails) - NOVO
+    public Boolean validateToken(String token) {
+        try {
+            extractAllClaims(token);
+            return !isTokenExpired(token);
+        } catch (ExpiredJwtException e) {
+            log.warn("Token expirado: {}", e.getMessage());
+            return false;
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("Token inválido: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // 🔥 MÉTODO 3: Obter dados do token sem lançar exceção - NOVO
+    public Claims getClaimsIfValid(String token) {
+        try {
+            if (validateToken(token)) {
+                return extractAllClaims(token);
+            }
+        } catch (Exception e) {
+            log.warn("Erro ao obter claims do token: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    // 🔥 MÉTODO 4: Verificar se token pode ser renovado - NOVO
+    public Boolean isTokenRefreshable(String token) {
+        try {
+            // Token precisa existir e não estar muito antigo
+            extractAllClaims(token);
+            return true;
+        } catch (ExpiredJwtException e) {
+            // Token expirado mas ainda pode ser renovado (dentro do período de graça)
+            // Opcional: verificar se expirou há menos de X dias
+            Date expiration = e.getClaims().getExpiration();
+            Date now = new Date();
+            long diffInMillis = now.getTime() - expiration.getTime();
+            long diffInDays = diffInMillis / (1000 * 60 * 60 * 24);
+            return diffInDays < 7; // Permite renovar até 7 dias após expirar
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

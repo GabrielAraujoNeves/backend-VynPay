@@ -11,10 +11,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class HappyHourService {
@@ -28,22 +28,44 @@ public class HappyHourService {
     @Autowired
     private ProdutoRepository produtoRepository;
 
-    @Autowired
-    private CompanyRepository companyRepository;
-
     private boolean isWithinTimeRange(HappyHourConfig config) {
-        if (config == null || config.getStartTime() == null || config.getEndTime() == null) {
+        if (config == null || !config.getIsActive()) {
+            return false;
+        }
+
+        List<String> configuredDays = config.getDaysOfWeekList();
+        if (configuredDays != null && !configuredDays.isEmpty()) {
+            String today = LocalDate.now().getDayOfWeek().toString();
+            if (!configuredDays.contains(today)) {
+                return false;
+            }
+        }
+
+        if (config.getStartTime() == null || config.getEndTime() == null) {
             return true;
         }
+
         LocalTime now = LocalTime.now();
-        return !now.isBefore(config.getStartTime()) && !now.isAfter(config.getEndTime());
+        LocalTime start = config.getStartTime();
+        LocalTime end = config.getEndTime();
+
+        if (start.isBefore(end)) {
+            return !now.isBefore(start) && !now.isAfter(end);
+        } else {
+            return !now.isBefore(start) || !now.isAfter(end);
+        }
     }
 
     @Transactional
     public HappyHourConfigResponse createOrUpdateConfig(Company company, HappyHourConfigRequest request) {
-        // Buscar configuração existente ou criar nova
-        HappyHourConfig config = configRepository.findByCompanyAndIsActiveTrue(company)
-                .orElse(new HappyHourConfig());
+        List<HappyHourConfig> existingConfigs = configRepository.findByCompanyAndIsActiveTrue(company);
+        HappyHourConfig config;
+
+        if (existingConfigs.isEmpty()) {
+            config = new HappyHourConfig();
+        } else {
+            config = existingConfigs.getFirst();
+        }
 
         config.setDiscountPercent(request.getDiscountPercent());
         config.setStartTime(request.getStartTime());
@@ -51,15 +73,20 @@ public class HappyHourService {
         config.setIsActive(true);
         config.setCompany(company);
 
-        config = configRepository.save(config);
+        if (request.getDaysOfWeek() != null && !request.getDaysOfWeek().isEmpty()) {
+            config.setDaysOfWeekList(request.getDaysOfWeek());
+        } else {
+            config.setDaysOfWeek(null);
+        }
 
-        // Limpar produtos antigos
+        config = configRepository.save(config);
         happyHourProductRepository.deleteByHappyHourConfig(config);
 
-        // Adicionar novos produtos
-        for (Long productId : request.getProductIds()) {
+        List<Long> uniqueProductIds = request.getProductIds().stream().distinct().toList();
+
+        for (Long productId : uniqueProductIds) {
             Produto product = produtoRepository.findByIdAndCompanyId(productId, company.getId())
-                    .orElseThrow(() -> new RuntimeException("Produto não encontrado: " + productId));
+                    .orElseThrow(() -> new RuntimeException("Produto nao encontrado: " + productId));
 
             HappyHourProduct happyHourProduct = new HappyHourProduct();
             happyHourProduct.setProduct(product);
@@ -73,14 +100,35 @@ public class HappyHourService {
 
     @Transactional
     public void deactivateHappyHour(Company company) {
-        HappyHourConfig config = configRepository.findByCompanyAndIsActiveTrue(company)
-                .orElseThrow(() -> new RuntimeException("Nenhuma configuração ativa encontrada"));
-        config.setIsActive(false);
-        configRepository.save(config);
+        List<HappyHourConfig> activeConfigs = configRepository.findByCompanyAndIsActiveTrue(company);
+        if (activeConfigs.isEmpty()) {
+            throw new RuntimeException("Nenhuma configuracao ativa encontrada");
+        }
+
+        for (HappyHourConfig config : activeConfigs) {
+            config.setIsActive(false);
+            configRepository.save(config);
+        }
     }
 
     public List<ProdutoPromocaoResponse> getProductsWithDiscount(Company company) {
-        HappyHourConfig activeConfig = configRepository.findByCompanyAndIsActiveTrue(company).orElse(null);
+        List<HappyHourConfig> activeConfigs = configRepository.findByCompanyAndIsActiveTrue(company);
+
+        if (activeConfigs.isEmpty()) {
+            List<Produto> produtosSemDesconto = produtoRepository.findByCompanyId(company.getId());
+            return produtosSemDesconto.stream()
+                    .map(produto -> new ProdutoPromocaoResponse(
+                            produto.getId(),
+                            produto.getNome(),
+                            produto.getDescricao(),
+                            produto.getPreco(),
+                            produto.getPreco(),
+                            0.0,
+                            false
+                    )).toList();
+        }
+
+        HappyHourConfig activeConfig = activeConfigs.getFirst();
         boolean isInTimeRange = isWithinTimeRange(activeConfig);
 
         List<Produto> produtos = produtoRepository.findByCompanyId(company.getId());
@@ -90,8 +138,9 @@ public class HappyHourService {
             BigDecimal precoPromocional = produto.getPreco();
             Double descontoPercent = 0.0;
 
-            if (activeConfig != null && activeConfig.getIsActive() && isInTimeRange) {
+            if (activeConfig.getIsActive() && isInTimeRange) {
                 isInHappyHour = happyHourProductRepository.existsByHappyHourConfigAndProduct(activeConfig, produto);
+
                 if (isInHappyHour) {
                     descontoPercent = activeConfig.getDiscountPercent();
                     BigDecimal desconto = produto.getPreco()
@@ -110,20 +159,29 @@ public class HappyHourService {
                     isInHappyHour ? descontoPercent : 0.0,
                     isInHappyHour
             );
-        }).collect(Collectors.toList());
+        }).toList();
     }
 
     public HappyHourConfigResponse getActiveConfig(Company company) {
-        HappyHourConfig config = configRepository.findByCompanyAndIsActiveTrue(company).orElse(null);
-        if (config == null) {
+        List<HappyHourConfig> activeConfigs = configRepository.findByCompanyAndIsActiveTrue(company);
+        if (activeConfigs.isEmpty()) {
             return null;
         }
-        return toResponse(config);
+        return toResponse(activeConfigs.getFirst());
+    }
+
+    // 🔥 MÉTODO ADICIONADO - Verifica se um produto está no Happy Hour
+    public boolean isProductInHappyHour(HappyHourConfigResponse config, Long productId) {
+        if (config == null || config.getProducts() == null) {
+            return false;
+        }
+        return config.getProducts().stream()
+                .anyMatch(p -> p.getProductId().equals(productId));
     }
 
     private HappyHourConfigResponse toResponse(HappyHourConfig config) {
         List<HappyHourProductResponse> productResponses = config.getHappyHourProducts().stream()
-                .filter(hp -> hp.getIsActive())
+                .filter(HappyHourProduct::getIsActive)
                 .map(hp -> {
                     BigDecimal discountedPrice = hp.getProduct().getPreco()
                             .multiply(BigDecimal.valueOf(1 - config.getDiscountPercent() / 100))
@@ -134,7 +192,7 @@ public class HappyHourService {
                             hp.getProduct().getPreco(),
                             discountedPrice
                     );
-                }).collect(Collectors.toList());
+                }).toList();
 
         return new HappyHourConfigResponse(
                 config.getId(),
@@ -142,7 +200,29 @@ public class HappyHourService {
                 config.getDiscountPercent(),
                 config.getStartTime(),
                 config.getEndTime(),
+                config.getDaysOfWeekList(),
                 productResponses
         );
+    }
+
+    public void forceActivateForTesting(Company company) {
+        List<HappyHourConfig> configs = configRepository.findByCompanyAndIsActiveTrue(company);
+        if (configs.isEmpty()) {
+            throw new RuntimeException("Nenhuma configuração encontrada");
+        }
+
+        HappyHourConfig config = configs.getFirst();
+        config.setStartTime(LocalTime.of(0, 0));
+        config.setEndTime(LocalTime.of(23, 59));
+        config.setIsActive(true);
+        config.setDaysOfWeek("MON,TUE,WED,THU,FRI,SAT,SUN");
+        configRepository.save(config);
+
+        System.out.println("=== FORCE ACTIVATE ===");
+        System.out.println("Config ID: " + config.getId());
+        System.out.println("isActive: " + config.getIsActive());
+        System.out.println("startTime: " + config.getStartTime());
+        System.out.println("endTime: " + config.getEndTime());
+        System.out.println("daysOfWeek: " + config.getDaysOfWeek());
     }
 }

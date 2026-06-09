@@ -1,6 +1,7 @@
 package VynPay.Vynpay.model;
 
 import VynPay.Vynpay.enun.StatusComanda;
+import VynPay.Vynpay.enun.TipoComanda;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -38,6 +39,16 @@ public class Comanda {
     @Column(name = "valor_total", precision = 10, scale = 2)
     private BigDecimal valorTotal = BigDecimal.ZERO;
 
+    @Column(name = "tipo_comanda")
+    @Enumerated(EnumType.STRING)
+    private TipoComanda tipoComanda;
+
+    @Column(name = "identificador_comanda")
+    private String identificadorComanda;
+
+    @Column(name = "mesa_id")
+    private Long mesaId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cliente_id")
     private Cliente cliente;
@@ -47,8 +58,13 @@ public class Comanda {
     @JoinColumn(name = "company_id")
     private Company company;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "comanda", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<ComandaItem> itens = new ArrayList<>();
+
+    @JsonIgnore
+    @OneToMany(mappedBy = "comanda", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<ClienteComanda> clientesComanda = new ArrayList<>();
 
     @PrePersist
     protected void onCreate() {

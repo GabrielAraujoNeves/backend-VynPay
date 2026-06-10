@@ -1,7 +1,7 @@
 package VynPay.Vynpay.controller;
 
 import VynPay.Vynpay.dto.request.*;
-import VynPay.Vynpay.dto.response.RelatorioResponseDTO;
+import VynPay.Vynpay.dto.response.*;
 import VynPay.Vynpay.enun.FormaPagamento;
 import VynPay.Vynpay.enun.StatusComanda;
 import VynPay.Vynpay.enun.TipoComanda;
@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/comanda")
@@ -60,7 +61,25 @@ public class ComandaController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> listarMesas(@AuthenticationPrincipal usuario admin) {
         try {
-            List<Mesa> mesas = comandaService.listarMesas(admin.getCompany().getId());
+            List<MesaResponseDTO> mesas = comandaService.listarMesasDTO(admin.getCompany().getId());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("total", mesas.size());
+            response.put("mesas", mesas);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @GetMapping("/mesas/detalhadas")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> listarMesasComConsumo(@AuthenticationPrincipal usuario admin) {
+        try {
+            List<MesaDetalhadaResponseDTO> mesas = comandaService.listarMesasComConsumo(admin.getCompany().getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("total", mesas.size());
@@ -80,9 +99,19 @@ public class ComandaController {
         try {
             List<Mesa> mesas = comandaService.listarMesasOcupadas(admin.getCompany().getId());
 
+            List<MesaResponseDTO> mesasDTO = mesas.stream()
+                    .map(mesa -> new MesaResponseDTO(
+                            mesa.getId(),
+                            mesa.getNumeroMesa(),
+                            mesa.getCapacidade(),
+                            mesa.getIsOcupada(),
+                            mesa.getCreatedAt()
+                    ))
+                    .collect(Collectors.toList());
+
             Map<String, Object> response = new HashMap<>();
-            response.put("total", mesas.size());
-            response.put("mesas", mesas);
+            response.put("total", mesasDTO.size());
+            response.put("mesas", mesasDTO);
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -108,6 +137,32 @@ public class ComandaController {
         } catch (RuntimeException e) {
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @DeleteMapping("/mesas/{mesaId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> deletarMesa(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long mesaId
+    ) {
+        try {
+            comandaService.deletarMesa(mesaId, admin.getCompany().getId());
+
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "✅ Mesa deletada com sucesso");
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+
+            // 🔥 Mensagem amigável para o usuário
+            if (e.getMessage().contains("comanda aberta")) {
+                error.put("error", "Não foi possível deletar a mesa pois existe uma comanda aberta. Feche a comanda primeiro.");
+            }
+
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
@@ -283,6 +338,47 @@ public class ComandaController {
 
             Map<String, String> response = new HashMap<>();
             response.put("message", "Cartões vinculados com sucesso");
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @DeleteMapping("/cartoes/{numeroCartao}/desvincular")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> desvincularCartao(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable String numeroCartao
+    ) {
+        try {
+            comandaService.desvincularCartao(numeroCartao, admin.getCompany().getId());
+
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Cartão desvinculado com sucesso");
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @GetMapping("/cartoes/{numeroCartao}/vinculados")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> listarCartoesVinculados(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable String numeroCartao
+    ) {
+        try {
+            List<CartaoEdificacao> cartoes = comandaService.listarCartoesVinculados(numeroCartao, admin.getCompany().getId());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("total", cartoes.size());
+            response.put("cartoes", cartoes);
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -652,7 +748,7 @@ public class ComandaController {
         }
     }
 
-        @GetMapping("7")
+    @GetMapping("/relatorio/dia")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> relatorioDoDia(@AuthenticationPrincipal usuario admin) {
         try {

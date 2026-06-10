@@ -19,9 +19,9 @@ public interface ComandaRepository extends JpaRepository<Comanda, Long> {
 
     Optional<Comanda> findByClienteIdAndStatus(Long clienteId, StatusComanda status);
 
-    // 🔥 CORRIGIDO: usar @Query explícita para evitar problemas com nomes de campos
+    // 🔥 RETORNA LISTA ao invés de Optional
     @Query("SELECT c FROM Comanda c WHERE c.identificadorComanda = :identificador AND c.tipoComanda = :tipo AND c.company.id = :companyId")
-    Optional<Comanda> findByIdentificadorAndTipoAndCompanyId(
+    List<Comanda> findByIdentificadorAndTipoAndCompanyId(
             @Param("identificador") String identificador,
             @Param("tipo") TipoComanda tipo,
             @Param("companyId") Long companyId

@@ -1,10 +1,7 @@
 package VynPay.Vynpay.service;
 
 import VynPay.Vynpay.dto.request.*;
-import VynPay.Vynpay.dto.response.RelatorioResponseDTO;
-import VynPay.Vynpay.dto.response.ResumoClienteDTO;
-import VynPay.Vynpay.dto.response.ResumoComandaDTO;
-import VynPay.Vynpay.dto.response.ResumoItemDTO;
+import VynPay.Vynpay.dto.response.*;
 import VynPay.Vynpay.enun.FormaPagamento;
 import VynPay.Vynpay.enun.StatusComanda;
 import VynPay.Vynpay.enun.TipoComanda;
@@ -20,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class ComandaService {
@@ -51,7 +49,7 @@ public class ComandaService {
     @Autowired
     private CartaoEdificacaoRepository cartaoEdificacaoRepository;
 
-    // ========== CLIENTES (MÉTODOS EXISTENTES QUE FALTAM) ==========
+    // ========== CLIENTES ==========
 
     @Transactional
     public Cliente cadastrarCliente(Company company, String nome, String cpf, String telefone) {
@@ -72,6 +70,8 @@ public class ComandaService {
     public List<Cliente> listarClientes(Long companyId) {
         return clienteRepository.findByCompanyId(companyId);
     }
+
+    // ========== ITENS DA COMANDA ==========
 
     public List<ComandaItem> listarItensDaComanda(Long comandaId, Long companyId) {
         Comanda comanda = comandaRepository.findById(comandaId)
@@ -108,6 +108,8 @@ public class ComandaService {
 
         comandaItemRepository.delete(item);
     }
+
+    // ========== FECHAMENTO E PAGAMENTO ==========
 
     @Transactional
     public Comanda fecharComanda(Long comandaId, Long companyId) {
@@ -201,6 +203,84 @@ public class ComandaService {
         return mesaRepository.findByCompanyIdAndIsOcupadaTrue(companyId);
     }
 
+    public List<MesaResponseDTO> listarMesasDTO(Long companyId) {
+        List<Mesa> mesas = mesaRepository.findByCompanyId(companyId);
+
+        return mesas.stream()
+                .map(mesa -> new MesaResponseDTO(
+                        mesa.getId(),
+                        mesa.getNumeroMesa(),
+                        mesa.getCapacidade(),
+                        mesa.getIsOcupada(),
+                        mesa.getCreatedAt()
+                ))
+                .collect(Collectors.toList());
+    }
+
+    public List<MesaDetalhadaResponseDTO> listarMesasComConsumo(Long companyId) {
+        List<Mesa> mesas = mesaRepository.findByCompanyId(companyId);
+
+        return mesas.stream().map(mesa -> {
+            // Buscar comanda ativa da mesa
+            List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                    String.valueOf(mesa.getNumeroMesa()),
+                    TipoComanda.MESA,
+                    companyId
+            );
+
+            // Filtrar apenas comandas abertas ou ativas
+            Comanda comandaAtiva = comandas.stream()
+                    .filter(c -> c.getStatus() == StatusComanda.ABERTA)
+                    .findFirst()
+                    .orElse(null);
+
+            ComandaInfoDTO comandaInfo = null;
+
+            if (comandaAtiva != null) {
+                // Buscar clientes da comanda
+                List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaAtiva.getId());
+
+                List<ClienteConsumoDTO> clientesConsumo = clientes.stream().map(cliente -> {
+                    // Buscar itens do cliente
+                    List<ComandaItem> itensCliente = comandaItemRepository.findByComandaId(comandaAtiva.getId());
+
+                    List<ItemConsumoDTO> itensConsumo = itensCliente.stream()
+                            .map(item -> new ItemConsumoDTO(
+                                    item.getId(),
+                                    item.getProduto().getNome(),
+                                    item.getQuantidade(),
+                                    item.getPrecoUnitario(),
+                                    item.getPrecoTotal()
+                            )).collect(Collectors.toList());
+
+                    return new ClienteConsumoDTO(
+                            cliente.getId(),
+                            cliente.getNome(),
+                            cliente.getValorTotal(),
+                            itensConsumo
+                    );
+                }).collect(Collectors.toList());
+
+                comandaInfo = new ComandaInfoDTO(
+                        comandaAtiva.getId(),
+                        comandaAtiva.getNumeroComanda(),
+                        comandaAtiva.getDataAbertura(),
+                        comandaAtiva.getValorTotal(),
+                        clientesConsumo
+                );
+            }
+
+            return new MesaDetalhadaResponseDTO(
+                    mesa.getId(),
+                    mesa.getNumeroMesa(),
+                    mesa.getCapacidade(),
+                    mesa.getIsOcupada(),
+                    mesa.getCreatedAt(),
+                    comandaInfo
+            );
+        }).collect(Collectors.toList());
+    }
+
     @Transactional
     public void liberarMesa(Long mesaId, Long companyId) {
         Mesa mesa = mesaRepository.findById(mesaId)
@@ -212,6 +292,40 @@ public class ComandaService {
 
         mesa.setIsOcupada(false);
         mesaRepository.save(mesa);
+    }
+
+    @Transactional
+    public void deletarMesa(Long mesaId, Long companyId) {
+        Mesa mesa = mesaRepository.findById(mesaId)
+                .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
+
+        if (!mesa.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Mesa não pertence à sua empresa");
+        }
+
+        // Verificar se a mesa está ocupada
+        if (mesa.getIsOcupada()) {
+            throw new RuntimeException("Não é possível deletar uma mesa ocupada. Libere a mesa primeiro.");
+        }
+
+        // Verificar se existe comanda associada a esta mesa
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                String.valueOf(mesa.getNumeroMesa()),
+                TipoComanda.MESA,
+                companyId
+        );
+
+        if (!comandas.isEmpty()) {
+            // Verificar se alguma comanda está aberta
+            boolean temComandaAberta = comandas.stream()
+                    .anyMatch(c -> c.getStatus() == StatusComanda.ABERTA);
+
+            if (temComandaAberta) {
+                throw new RuntimeException("Não é possível deletar a mesa porque existe uma comanda aberta. Feche a comanda primeiro.");
+            }
+        }
+
+        mesaRepository.delete(mesa);
     }
 
     // ========== PULSEIRAS ==========
@@ -291,6 +405,23 @@ public class ComandaService {
 
         secundario.setCartaoVinculado(cartaoPrincipal);
         cartaoEdificacaoRepository.save(secundario);
+    }
+
+    @Transactional
+    public void desvincularCartao(String numeroCartao, Long companyId) {
+        CartaoEdificacao cartao = cartaoEdificacaoRepository.findByNumeroCartaoAndCompanyId(numeroCartao, companyId)
+                .orElseThrow(() -> new RuntimeException("Cartão não encontrado"));
+
+        cartao.setCartaoVinculado(null);
+        cartaoEdificacaoRepository.save(cartao);
+    }
+
+    public List<CartaoEdificacao> listarCartoesVinculados(String cartaoPrincipal, Long companyId) {
+        // Verificar se o cartão principal existe
+        cartaoEdificacaoRepository.findByNumeroCartaoAndCompanyId(cartaoPrincipal, companyId)
+                .orElseThrow(() -> new RuntimeException("Cartão principal não encontrado"));
+
+        return cartaoEdificacaoRepository.findByCartaoVinculado(cartaoPrincipal);
     }
 
     // ========== COMANDAS ==========
@@ -392,7 +523,15 @@ public class ComandaService {
     }
 
     public Comanda buscarComandaPorIdentificador(String identificador, TipoComanda tipo, Long companyId) {
-        return comandaRepository.findByIdentificadorAndTipoAndCompanyId(identificador, tipo, companyId)
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(identificador, tipo, companyId);
+
+        if (comandas.isEmpty()) {
+            throw new RuntimeException("Comanda não encontrada");
+        }
+
+        // Retorna a comanda mais recente (maior ID)
+        return comandas.stream()
+                .max((c1, c2) -> c1.getId().compareTo(c2.getId()))
                 .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
     }
 
@@ -445,17 +584,28 @@ public class ComandaService {
         if (tipo == TipoComanda.PULSEIRA) {
             List<Pulseira> pulseirasAgrupadas = pulseiraRepository.findByPulseiraAgrupadaCom(identificador);
             List<Comanda> comandas = new ArrayList<>();
-            comandas.add(buscarComandaPorIdentificador(identificador, tipo, companyId));
+
+            List<Comanda> comandaPrincipal = comandaRepository.findByIdentificadorAndTipoAndCompanyId(identificador, tipo, companyId);
+            comandas.addAll(comandaPrincipal);
+
             for (Pulseira pulseira : pulseirasAgrupadas) {
-                comandas.add(buscarComandaPorIdentificador(pulseira.getNumeroPulseira(), tipo, companyId));
+                List<Comanda> comandaSecundaria = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                        pulseira.getNumeroPulseira(), tipo, companyId);
+                comandas.addAll(comandaSecundaria);
             }
             return comandas;
+
         } else if (tipo == TipoComanda.CARTAO_EDIFICACAO) {
             List<CartaoEdificacao> cartoesVinculados = cartaoEdificacaoRepository.findByCartaoVinculado(identificador);
             List<Comanda> comandas = new ArrayList<>();
-            comandas.add(buscarComandaPorIdentificador(identificador, tipo, companyId));
+
+            List<Comanda> comandaPrincipal = comandaRepository.findByIdentificadorAndTipoAndCompanyId(identificador, tipo, companyId);
+            comandas.addAll(comandaPrincipal);
+
             for (CartaoEdificacao cartao : cartoesVinculados) {
-                comandas.add(buscarComandaPorIdentificador(cartao.getNumeroCartao(), tipo, companyId));
+                List<Comanda> comandaSecundaria = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                        cartao.getNumeroCartao(), tipo, companyId);
+                comandas.addAll(comandaSecundaria);
             }
             return comandas;
         }
@@ -494,6 +644,8 @@ public class ComandaService {
         return pagamentoPrincipal;
     }
 
+    // ========== RELATÓRIO ==========
+
     public RelatorioResponseDTO gerarRelatorioDia(Long companyId) {
         LocalDate hoje = LocalDate.now();
 
@@ -509,7 +661,7 @@ public class ComandaService {
                 .filter(c -> c.getDataFechamento() != null &&
                         c.getDataFechamento().toLocalDate().equals(hoje))
                 .map(this::toResumoComandaDTO)
-                .toList();
+                .collect(Collectors.toList());
 
         return new RelatorioResponseDTO(
                 hoje,
@@ -528,14 +680,14 @@ public class ComandaService {
                         item.getPrecoTotal(),
                         item.getProduto().getNome(),
                         item.getProduto().getPreco()
-                )).toList();
+                )).collect(Collectors.toList());
 
         List<ResumoClienteDTO> clientesDTO = comanda.getClientesComanda().stream()
                 .map(cliente -> new ResumoClienteDTO(
                         cliente.getId(),
                         cliente.getNome(),
                         cliente.getValorTotal()
-                )).toList();
+                )).collect(Collectors.toList());
 
         return new ResumoComandaDTO(
                 comanda.getId(),
@@ -549,5 +701,4 @@ public class ComandaService {
                 clientesDTO
         );
     }
-
 }

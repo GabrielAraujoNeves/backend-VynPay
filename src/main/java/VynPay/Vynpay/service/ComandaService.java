@@ -84,6 +84,11 @@ public class ComandaService {
         return comandaItemRepository.findByComandaId(comandaId);
     }
 
+    // 🔥 NOVO MÉTODO - Buscar itens por comanda
+    public List<ComandaItem> buscarItensPorComanda(Long comandaId) {
+        return comandaItemRepository.findByComandaId(comandaId);
+    }
+
     @Transactional
     public void removerItemDaComanda(Long itemId, Long companyId) {
         ComandaItem item = comandaItemRepository.findById(itemId)
@@ -153,6 +158,7 @@ public class ComandaService {
         pagamento.setFormaPagamento(formaPagamento);
 
         comanda.setStatus(StatusComanda.PAGA);
+        comanda.setDataFechamento(LocalDateTime.now());
 
         Cliente cliente = comanda.getCliente();
         if (cliente != null) {
@@ -160,9 +166,230 @@ public class ComandaService {
             clienteRepository.save(cliente);
         }
 
-        comandaRepository.save(comanda);
+        if (comanda.getTipoComanda() == TipoComanda.MESA) {
+            liberarMesaPorComanda(comanda, companyId);
+        }
 
+        comandaRepository.save(comanda);
         return pagamentoRepository.save(pagamento);
+    }
+
+    @Transactional
+    public void liberarMesaPorComanda(Comanda comanda, Long companyId) {
+        try {
+            String identificador = comanda.getIdentificadorComanda();
+            Integer numeroMesa = Integer.parseInt(identificador);
+
+            Mesa mesa = mesaRepository.findByNumeroMesaAndCompanyId(numeroMesa, companyId)
+                    .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
+
+            // 🔥 ORDEM CORRETA: Remover na sequência certa (do mais específico para o mais geral)
+
+            // 1. Primeiro remover PAGAMENTOS (eles referenciam cliente_comanda)
+            List<Pagamento> pagamentos = pagamentoRepository.findByComandaId(comanda.getId());
+            if (!pagamentos.isEmpty()) {
+                pagamentoRepository.deleteAll(pagamentos);
+                System.out.println("✅ " + pagamentos.size() + " pagamentos removidos");
+            }
+
+            // 2. Depois remover ITENS (eles referenciam cliente_comanda)
+            List<ComandaItem> itens = comandaItemRepository.findByComandaId(comanda.getId());
+            if (!itens.isEmpty()) {
+                comandaItemRepository.deleteAll(itens);
+                System.out.println(itens.size() + " itens removidos da comanda");
+            }
+
+            // 3. Depois remover CLIENTES
+            List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+            if (!clientes.isEmpty()) {
+                clienteComandaRepository.deleteAll(clientes);
+                System.out.println(clientes.size() + " clientes removidos da mesa " + mesa.getNumeroMesa());
+            }
+
+            // 4. Liberar a mesa
+            mesa.setIsOcupada(false);
+            mesaRepository.save(mesa);
+
+            System.out.println(" Mesa " + mesa.getNumeroMesa() + " liberada com sucesso!");
+
+        } catch (Exception e) {
+            System.err.println("❌ Erro ao liberar mesa: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+    // ========== PAGAMENTO INDIVIDUAL ==========
+
+    @Transactional
+    public Pagamento pagarClienteIndividual(Long comandaId, Long clienteComandaId, BigDecimal valorPago, FormaPagamento formaPagamento, Long companyId) {
+        Comanda comanda = comandaRepository.findById(comandaId)
+                .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
+
+        if (!comanda.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Comanda não pertence à sua empresa");
+        }
+
+        ClienteComanda cliente = clienteComandaRepository.findById(clienteComandaId)
+                .orElseThrow(() -> new RuntimeException("Cliente não encontrado"));
+
+        if (!cliente.getComanda().getId().equals(comandaId)) {
+            throw new RuntimeException("Cliente não pertence a esta comanda");
+        }
+
+        if (valorPago.compareTo(cliente.getValorTotal()) < 0) {
+            throw new RuntimeException("Valor pago é menor que o valor total do cliente");
+        }
+
+        cliente.setPago(Boolean.TRUE);
+        cliente.setDataPagamento(LocalDateTime.now());
+        clienteComandaRepository.save(cliente);
+
+        Pagamento pagamento = new Pagamento();
+        pagamento.setComanda(comanda);
+        pagamento.setClienteComanda(cliente);
+        pagamento.setValorPago(valorPago);
+        pagamento.setFormaPagamento(formaPagamento);
+        pagamento.setDataPagamento(LocalDateTime.now());
+        pagamentoRepository.save(pagamento);
+
+        // 🔥 VERIFICAR SE TODOS PAGARAM - COM LOGS
+        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
+        boolean todosPagos = true;
+
+        System.out.println("🔍 Verificando clientes da comanda " + comandaId + ":");
+        for (ClienteComanda c : clientes) {
+            boolean pago = Boolean.TRUE.equals(c.getPago());
+            System.out.println("  - " + c.getNome() + ": pago = " + pago);
+            if (!pago) {
+                todosPagos = false;
+            }
+        }
+
+        System.out.println("✅ Todos pagaram? " + todosPagos);
+
+        if (todosPagos) {
+            System.out.println(" Todos pagaram! Fechando comanda e liberando mesa...");
+            comanda.setStatus(StatusComanda.PAGA);
+            comanda.setDataFechamento(LocalDateTime.now());
+            comandaRepository.save(comanda);
+
+            if (comanda.getTipoComanda() == TipoComanda.MESA) {
+                liberarMesaPorComanda(comanda, companyId);
+            }
+        } else {
+            System.out.println("⏳ Ainda há clientes pendentes...");
+        }
+
+        return pagamento;
+    }
+
+    private boolean verificarTodosClientesPagos(Long comandaId) {
+        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
+        return clientes.stream().allMatch(c -> Boolean.TRUE.equals(c.getPago()));
+    }
+
+    // ========== PAGAMENTO CONJUNTO ==========
+
+    @Transactional
+    public List<Pagamento> pagamentoConjunto(Long comandaId, BigDecimal valorPago, FormaPagamento formaPagamento, List<Long> clienteIds, Long companyId) {
+        Comanda comanda = comandaRepository.findById(comandaId)
+                .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
+
+        if (!comanda.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Comanda não pertence à sua empresa");
+        }
+
+        BigDecimal valorTotalClientes = BigDecimal.ZERO;
+        List<ClienteComanda> clientesSelecionados = new ArrayList<>();
+
+        for (Long clienteId : clienteIds) {
+            ClienteComanda cliente = clienteComandaRepository.findById(clienteId)
+                    .orElseThrow(() -> new RuntimeException("Cliente não encontrado: " + clienteId));
+
+            if (!cliente.getComanda().getId().equals(comandaId)) {
+                throw new RuntimeException("Cliente não pertence a esta comanda");
+            }
+
+            clientesSelecionados.add(cliente);
+            valorTotalClientes = valorTotalClientes.add(cliente.getValorTotal());
+        }
+
+        if (valorPago.compareTo(valorTotalClientes) < 0) {
+            throw new RuntimeException("Valor pago é menor que o valor total");
+        }
+
+        List<Pagamento> pagamentos = new ArrayList<>();
+
+        for (ClienteComanda cliente : clientesSelecionados) {
+            // 🔥 USAR Boolean.TRUE em vez de true
+            cliente.setPago(Boolean.TRUE);
+            cliente.setDataPagamento(LocalDateTime.now());
+            clienteComandaRepository.save(cliente);
+
+            Pagamento pagamento = new Pagamento();
+            pagamento.setComanda(comanda);
+            pagamento.setClienteComanda(cliente);
+            pagamento.setValorPago(cliente.getValorTotal());
+            pagamento.setFormaPagamento(formaPagamento);
+            pagamento.setDataPagamento(LocalDateTime.now());
+            pagamentos.add(pagamentoRepository.save(pagamento));
+        }
+
+        boolean todosPagos = verificarTodosClientesPagos(comandaId);
+
+        if (todosPagos) {
+            comanda.setStatus(StatusComanda.PAGA);
+            comanda.setDataFechamento(LocalDateTime.now());
+            comandaRepository.save(comanda);
+
+            if (comanda.getTipoComanda() == TipoComanda.MESA) {
+                liberarMesaPorComanda(comanda, companyId);
+            }
+        }
+
+        return pagamentos;
+    }
+    // ========== REMOVER CLIENTE DA MESA ==========
+
+    @Transactional
+    public void removerClienteDaMesa(Long comandaId, Long clienteComandaId, Long companyId) {
+        Comanda comanda = comandaRepository.findById(comandaId)
+                .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
+
+        if (!comanda.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Comanda não pertence à sua empresa");
+        }
+
+        ClienteComanda cliente = clienteComandaRepository.findById(clienteComandaId)
+                .orElseThrow(() -> new RuntimeException("Cliente não encontrado"));
+
+        if (!cliente.getComanda().getId().equals(comandaId)) {
+            throw new RuntimeException("Cliente não pertence a esta comanda");
+        }
+
+        List<ComandaItem> itensCliente = comandaItemRepository.findByComandaId(comandaId);
+        boolean temItens = itensCliente.stream()
+                .anyMatch(item -> item.getClienteComanda() != null &&
+                        item.getClienteComanda().getId().equals(clienteComandaId));
+
+        if (temItens) {
+            throw new RuntimeException("Não é possível remover o cliente pois ele já consumiu itens. Ele precisa pagar primeiro.");
+        }
+
+        clienteComandaRepository.delete(cliente);
+
+        List<ClienteComanda> clientesRestantes = clienteComandaRepository.findByComandaId(comandaId);
+
+        if (clientesRestantes.isEmpty()) {
+            comanda.setStatus(StatusComanda.FECHADA);
+            comanda.setDataFechamento(LocalDateTime.now());
+            comandaRepository.save(comanda);
+
+            if (comanda.getTipoComanda() == TipoComanda.MESA) {
+                liberarMesaPorComanda(comanda, companyId);
+            }
+        }
     }
 
     public BigDecimal calcularTotalDoDia(Long companyId) {
@@ -221,14 +448,12 @@ public class ComandaService {
         List<Mesa> mesas = mesaRepository.findByCompanyId(companyId);
 
         return mesas.stream().map(mesa -> {
-            // Buscar comanda ativa da mesa
             List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
                     String.valueOf(mesa.getNumeroMesa()),
                     TipoComanda.MESA,
                     companyId
             );
 
-            // Filtrar apenas comandas abertas ou ativas
             Comanda comandaAtiva = comandas.stream()
                     .filter(c -> c.getStatus() == StatusComanda.ABERTA)
                     .findFirst()
@@ -237,14 +462,14 @@ public class ComandaService {
             ComandaInfoDTO comandaInfo = null;
 
             if (comandaAtiva != null) {
-                // Buscar clientes da comanda
                 List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaAtiva.getId());
 
                 List<ClienteConsumoDTO> clientesConsumo = clientes.stream().map(cliente -> {
-                    // Buscar itens do cliente
                     List<ComandaItem> itensCliente = comandaItemRepository.findByComandaId(comandaAtiva.getId());
 
                     List<ItemConsumoDTO> itensConsumo = itensCliente.stream()
+                            .filter(item -> item.getClienteComanda() != null &&
+                                    item.getClienteComanda().getId().equals(cliente.getId()))
                             .map(item -> new ItemConsumoDTO(
                                     item.getId(),
                                     item.getProduto().getNome(),
@@ -290,6 +515,81 @@ public class ComandaService {
             throw new RuntimeException("Mesa não pertence à sua empresa");
         }
 
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                String.valueOf(mesa.getNumeroMesa()),
+                TipoComanda.MESA,
+                companyId
+        );
+
+        Comanda comandaAberta = comandas.stream()
+                .filter(c -> c.getStatus() == StatusComanda.ABERTA)
+                .findFirst()
+                .orElse(null);
+
+        if (comandaAberta != null) {
+            // 1. Remover pagamentos
+            List<Pagamento> pagamentos = pagamentoRepository.findByComandaId(comandaAberta.getId());
+            if (!pagamentos.isEmpty()) {
+                pagamentoRepository.deleteAll(pagamentos);
+            }
+
+            // 2. Remover itens
+            List<ComandaItem> itens = comandaItemRepository.findByComandaId(comandaAberta.getId());
+            if (!itens.isEmpty()) {
+                comandaItemRepository.deleteAll(itens);
+            }
+
+            // 3. Remover clientes
+            List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaAberta.getId());
+            if (!clientes.isEmpty()) {
+                clienteComandaRepository.deleteAll(clientes);
+                System.out.println(clientes.size() + " clientes removidos da mesa " + mesa.getNumeroMesa());
+            }
+
+            comandaAberta.setStatus(StatusComanda.FECHADA);
+            comandaAberta.setDataFechamento(LocalDateTime.now());
+            comandaRepository.save(comandaAberta);
+        }
+
+        mesa.setIsOcupada(false);
+        mesaRepository.save(mesa);
+    }
+
+
+    @Transactional
+    public void limparMesaCompleta(Long mesaId, Long companyId) {
+        Mesa mesa = mesaRepository.findById(mesaId)
+                .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
+
+        if (!mesa.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Mesa não pertence à sua empresa");
+        }
+
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                String.valueOf(mesa.getNumeroMesa()),
+                TipoComanda.MESA,
+                companyId
+        );
+
+        for (Comanda comanda : comandas) {
+            if (comanda.getStatus() == StatusComanda.ABERTA) {
+                List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+                if (!clientes.isEmpty()) {
+                    clienteComandaRepository.deleteAll(clientes);
+                }
+
+                List<ComandaItem> itens = comandaItemRepository.findByComandaId(comanda.getId());
+                if (!itens.isEmpty()) {
+                    comandaItemRepository.deleteAll(itens);
+                }
+
+                comanda.setStatus(StatusComanda.FECHADA);
+                comanda.setValorTotal(BigDecimal.ZERO);
+                comanda.setDataFechamento(LocalDateTime.now());
+                comandaRepository.save(comanda);
+            }
+        }
+
         mesa.setIsOcupada(false);
         mesaRepository.save(mesa);
     }
@@ -303,12 +603,10 @@ public class ComandaService {
             throw new RuntimeException("Mesa não pertence à sua empresa");
         }
 
-        // Verificar se a mesa está ocupada
         if (mesa.getIsOcupada()) {
             throw new RuntimeException("Não é possível deletar uma mesa ocupada. Libere a mesa primeiro.");
         }
 
-        // Verificar se existe comanda associada a esta mesa
         List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
                 String.valueOf(mesa.getNumeroMesa()),
                 TipoComanda.MESA,
@@ -316,7 +614,6 @@ public class ComandaService {
         );
 
         if (!comandas.isEmpty()) {
-            // Verificar se alguma comanda está aberta
             boolean temComandaAberta = comandas.stream()
                     .anyMatch(c -> c.getStatus() == StatusComanda.ABERTA);
 
@@ -417,7 +714,6 @@ public class ComandaService {
     }
 
     public List<CartaoEdificacao> listarCartoesVinculados(String cartaoPrincipal, Long companyId) {
-        // Verificar se o cartão principal existe
         cartaoEdificacaoRepository.findByNumeroCartaoAndCompanyId(cartaoPrincipal, companyId)
                 .orElseThrow(() -> new RuntimeException("Cartão principal não encontrado"));
 
@@ -529,7 +825,6 @@ public class ComandaService {
             throw new RuntimeException("Comanda não encontrada");
         }
 
-        // Retorna a comanda mais recente (maior ID)
         return comandas.stream()
                 .max((c1, c2) -> c1.getId().compareTo(c2.getId()))
                 .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
@@ -567,6 +862,7 @@ public class ComandaService {
         ComandaItem item = new ComandaItem();
         item.setComanda(comanda);
         item.setProduto(produto);
+        item.setClienteComanda(clienteComanda);
         item.setQuantidade(quantidade);
         item.setPrecoUnitario(produto.getPreco());
         item.calcularTotal();
@@ -632,7 +928,12 @@ public class ComandaService {
             pagamento.setFormaPagamento(formaPagamento);
 
             comanda.setStatus(StatusComanda.PAGA);
+            comanda.setDataFechamento(LocalDateTime.now());
             comandaRepository.save(comanda);
+
+            if (comanda.getTipoComanda() == TipoComanda.MESA) {
+                liberarMesaPorComanda(comanda, companyId);
+            }
 
             if (pagamentoPrincipal == null) {
                 pagamentoPrincipal = pagamentoRepository.save(pagamento);
@@ -700,5 +1001,43 @@ public class ComandaService {
                 itensDTO,
                 clientesDTO
         );
+    }
+
+
+    @Transactional
+    public void forcarLimpezaMesa(Long mesaId, Long companyId) {
+        Mesa mesa = mesaRepository.findById(mesaId)
+                .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
+
+        if (!mesa.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Mesa não pertence à sua empresa");
+        }
+
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                String.valueOf(mesa.getNumeroMesa()),
+                TipoComanda.MESA,
+                companyId
+        );
+
+        for (Comanda comanda : comandas) {
+            // 1. Remover itens
+            List<ComandaItem> itens = comandaItemRepository.findByComandaId(comanda.getId());
+            if (!itens.isEmpty()) {
+                comandaItemRepository.deleteAll(itens);
+            }
+
+            // 2. Remover clientes
+            List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+            if (!clientes.isEmpty()) {
+                clienteComandaRepository.deleteAll(clientes);
+            }
+
+            // 3. Deletar a comanda
+            comandaRepository.delete(comanda);
+        }
+
+        // 4. Liberar a mesa
+        mesa.setIsOcupada(false);
+        mesaRepository.save(mesa);
     }
 }

@@ -760,4 +760,164 @@ public class ComandaController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
+
+
+    // ========== PAGAMENTO INDIVIDUAL ==========
+
+    @PostMapping("/{comandaId}/cliente/{clienteComandaId}/pagar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> pagarClienteIndividual(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId,
+            @PathVariable Long clienteComandaId,
+            @RequestBody PagamentoRequest request
+    ) {
+        try {
+            Pagamento pagamento = comandaService.pagarClienteIndividual(
+                    comandaId,
+                    clienteComandaId,
+                    request.getValorPago(),
+                    request.getFormaPagamento(),
+                    admin.getCompany().getId()
+            );
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Pagamento do cliente realizado com sucesso");
+            response.put("clienteId", clienteComandaId);
+            response.put("valorPago", pagamento.getValorPago());
+            response.put("formaPagamento", pagamento.getFormaPagamento());
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+// ========== PAGAMENTO CONJUNTO (AMIGOS) ==========
+
+    @PostMapping("/{comandaId}/pagar-conjunto")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> pagamentoConjunto(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId,
+            @RequestParam FormaPagamento formaPagamento,
+            @RequestParam BigDecimal valorPago,
+            @RequestBody List<Long> clienteIds
+    ) {
+        try {
+            List<Pagamento> pagamentos = comandaService.pagamentoConjunto(
+                    comandaId,
+                    valorPago,
+                    formaPagamento,
+                    clienteIds,
+                    admin.getCompany().getId()
+            );
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Pagamento conjunto realizado com sucesso");
+            response.put("clientesPagos", clienteIds.size());
+            response.put("totalPago", valorPago);
+            response.put("formaPagamento", formaPagamento);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+// ========== REMOVER CLIENTE DA MESA ==========
+
+    @DeleteMapping("/{comandaId}/cliente/{clienteComandaId}/remover")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> removerClienteDaMesa(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId,
+            @PathVariable Long clienteComandaId
+    ) {
+        try {
+            comandaService.removerClienteDaMesa(comandaId, clienteComandaId, admin.getCompany().getId());
+
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "✅ Cliente removido da mesa com sucesso");
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @DeleteMapping("/mesas/{mesaId}/forcar-limpeza")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> forcarLimpezaMesa(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long mesaId
+    ) {
+        try {
+            comandaService.forcarLimpezaMesa(mesaId, admin.getCompany().getId());
+
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "✅ Mesa " + mesaId + " foi limpa e liberada com sucesso!");
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+// ========== LISTAR CLIENTES COM VALORES ==========
+
+    @GetMapping("/{comandaId}/clientes/detalhes")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> listarClientesComDetalhes(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId
+    ) {
+        try {
+            List<ClienteComanda> clientes = comandaService.listarClientesDaComanda(comandaId, admin.getCompany().getId());
+
+            List<Map<String, Object>> detalhes = clientes.stream().map(cliente -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", cliente.getId());
+                map.put("nome", cliente.getNome());
+                map.put("valorTotal", cliente.getValorTotal());
+                map.put("pago", cliente.getPago() != null && cliente.getPago());
+
+                // 🔥 CORRIGIDO: Usando o Service em vez do Repository
+                List<ComandaItem> itens = comandaService.buscarItensPorComanda(comandaId);
+                List<Map<String, Object>> itensCliente = itens.stream()
+                        .filter(item -> item.getClienteComanda() != null &&
+                                item.getClienteComanda().getId().equals(cliente.getId()))
+                        .map(item -> {
+                            Map<String, Object> itemMap = new HashMap<>();
+                            itemMap.put("produto", item.getProduto().getNome());
+                            itemMap.put("quantidade", item.getQuantidade());
+                            itemMap.put("precoUnitario", item.getPrecoUnitario());
+                            itemMap.put("precoTotal", item.getPrecoTotal());
+                            return itemMap;
+                        })
+                        .collect(Collectors.toList());
+
+                map.put("itens", itensCliente);
+                return map;
+            }).collect(Collectors.toList());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("total", detalhes.size());
+            response.put("clientes", detalhes);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
 }

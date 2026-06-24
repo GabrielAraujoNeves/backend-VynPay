@@ -33,6 +33,10 @@ public class Pagamento {
     @JoinColumn(name = "comanda_id")
     private Comanda comanda;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cliente_comanda_id")
+    private ClienteComanda clienteComanda;
+
     @PrePersist
     protected void onCreate() {
         dataPagamento = LocalDateTime.now();

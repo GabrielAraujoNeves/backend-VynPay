@@ -1,10 +1,9 @@
 package VynPay.Vynpay.model;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 
 import java.math.BigDecimal;
 
@@ -19,24 +18,23 @@ public class ComandaItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Integer quantidade;
-
-    @Column(name = "preco_unitario", precision = 10, scale = 2)
-    private BigDecimal precoUnitario;
-
-    @Column(name = "preco_total", precision = 10, scale = 2)
-    private BigDecimal precoTotal;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "produto_id")
-    private Produto produto;
-
-    @JsonIgnore
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne
     @JoinColumn(name = "comanda_id")
     private Comanda comanda;
 
+    @ManyToOne
+    @JoinColumn(name = "produto_id")
+    private Produto produto;
+
+    @ManyToOne
+    @JoinColumn(name = "cliente_comanda_id")
+    private ClienteComanda clienteComanda;
+
+    private Integer quantidade;
+    private BigDecimal precoUnitario;
+    private BigDecimal precoTotal;
+
     public void calcularTotal() {
-        this.precoTotal = precoUnitario.multiply(BigDecimal.valueOf(quantidade));
+        this.precoTotal = this.precoUnitario.multiply(BigDecimal.valueOf(this.quantidade));
     }
 }

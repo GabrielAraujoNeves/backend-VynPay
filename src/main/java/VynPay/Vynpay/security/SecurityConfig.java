@@ -34,8 +34,8 @@ public class SecurityConfig {
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider() {
-        // ✅ CORRIGIDO: passa usuarioService no construtor
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider(usuarioService);
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        authProvider.setUserDetailsService(usuarioService);
         authProvider.setPasswordEncoder(passwordEncoder);
         return authProvider;
     }
@@ -48,17 +48,16 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // ✅ Adicione a porta exata do seu React (Vite usa 5173)
         configuration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:5173",      // Vite
-                "http://localhost:3000",      // React padrão
-                "http://localhost:4200"       // Angular
+                "http://localhost:5173",
+                "http://localhost:3000",
+                "http://localhost:4200"
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(true);  // ← IMPORTANTE: mudar para true
+        configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
-        configuration.addExposedHeader("Authorization");  // ← expor header para token
+        configuration.addExposedHeader("Authorization");
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

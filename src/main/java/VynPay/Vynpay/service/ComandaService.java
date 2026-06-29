@@ -84,7 +84,6 @@ public class ComandaService {
         return comandaItemRepository.findByComandaId(comandaId);
     }
 
-    // 🔥 NOVO MÉTODO - Buscar itens por comanda
     public List<ComandaItem> buscarItensPorComanda(Long comandaId) {
         return comandaItemRepository.findByComandaId(comandaId);
     }
@@ -183,23 +182,21 @@ public class ComandaService {
             Mesa mesa = mesaRepository.findByNumeroMesaAndCompanyId(numeroMesa, companyId)
                     .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
 
-            // 🔥 ORDEM CORRETA: Remover na sequência certa (do mais específico para o mais geral)
-
-            // 1. Primeiro remover PAGAMENTOS (eles referenciam cliente_comanda)
+            // 1. Remover pagamentos
             List<Pagamento> pagamentos = pagamentoRepository.findByComandaId(comanda.getId());
             if (!pagamentos.isEmpty()) {
                 pagamentoRepository.deleteAll(pagamentos);
                 System.out.println("✅ " + pagamentos.size() + " pagamentos removidos");
             }
 
-            // 2. Depois remover ITENS (eles referenciam cliente_comanda)
+            // 2. Remover itens
             List<ComandaItem> itens = comandaItemRepository.findByComandaId(comanda.getId());
             if (!itens.isEmpty()) {
                 comandaItemRepository.deleteAll(itens);
                 System.out.println(itens.size() + " itens removidos da comanda");
             }
 
-            // 3. Depois remover CLIENTES
+            // 3. Remover clientes
             List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
             if (!clientes.isEmpty()) {
                 clienteComandaRepository.deleteAll(clientes);
@@ -217,7 +214,6 @@ public class ComandaService {
             e.printStackTrace();
         }
     }
-
 
     // ========== PAGAMENTO INDIVIDUAL ==========
 
@@ -253,7 +249,6 @@ public class ComandaService {
         pagamento.setDataPagamento(LocalDateTime.now());
         pagamentoRepository.save(pagamento);
 
-        // 🔥 VERIFICAR SE TODOS PAGARAM - COM LOGS
         List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
         boolean todosPagos = true;
 
@@ -322,7 +317,6 @@ public class ComandaService {
         List<Pagamento> pagamentos = new ArrayList<>();
 
         for (ClienteComanda cliente : clientesSelecionados) {
-            // 🔥 USAR Boolean.TRUE em vez de true
             cliente.setPago(Boolean.TRUE);
             cliente.setDataPagamento(LocalDateTime.now());
             clienteComandaRepository.save(cliente);
@@ -350,6 +344,7 @@ public class ComandaService {
 
         return pagamentos;
     }
+
     // ========== REMOVER CLIENTE DA MESA ==========
 
     @Transactional
@@ -390,6 +385,136 @@ public class ComandaService {
                 liberarMesaPorComanda(comanda, companyId);
             }
         }
+    }
+
+    // ========== ADICIONAR CLIENTE À COMANDA EXISTENTE ==========
+
+    @Transactional
+    public ClienteComanda adicionarClienteNaComanda(Long comandaId, String nomeCliente, Long companyId) {
+        // 1. Buscar a comanda
+        Comanda comanda = comandaRepository.findById(comandaId)
+                .orElseThrow(() -> new RuntimeException("Comanda não encontrada"));
+
+        // 2. Verificar se a comanda pertence à empresa
+        if (!comanda.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Comanda não pertence à sua empresa");
+        }
+
+        // 3. Verificar se a comanda está aberta
+        if (comanda.getStatus() != StatusComanda.ABERTA) {
+            throw new RuntimeException("Comanda já foi fechada ou paga. Não é possível adicionar clientes.");
+        }
+
+        // 4. Verificar se é uma comanda de mesa
+        if (comanda.getTipoComanda() != TipoComanda.MESA) {
+            throw new RuntimeException("Esta comanda não é de uma mesa. Não é possível adicionar clientes.");
+        }
+
+        // 5. Buscar a mesa para verificar capacidade
+        Mesa mesa = mesaRepository.findById(comanda.getMesaId())
+                .orElseThrow(() -> new RuntimeException("Mesa não encontrada"));
+
+        // 6. Contar clientes atuais na comanda
+        List<ClienteComanda> clientesAtuais = clienteComandaRepository.findByComandaId(comandaId);
+        int totalClientes = clientesAtuais.size();
+
+        // 7. Verificar se cabe mais um cliente
+        if (totalClientes >= mesa.getCapacidade()) {
+            throw new RuntimeException("Mesa está lotada! Capacidade máxima: " + mesa.getCapacidade() + " clientes.");
+        }
+
+        // 8. Verificar se o cliente já existe na comanda (mesmo nome)
+        boolean clienteExiste = clientesAtuais.stream()
+                .anyMatch(c -> c.getNome().equalsIgnoreCase(nomeCliente));
+
+        if (clienteExiste) {
+            throw new RuntimeException("Cliente '" + nomeCliente + "' já está na mesa.");
+        }
+
+        // 9. Criar novo cliente na comanda
+        ClienteComanda novoCliente = new ClienteComanda();
+        novoCliente.setNome(nomeCliente);
+        novoCliente.setComanda(comanda);
+        novoCliente.setValorTotal(BigDecimal.ZERO);
+        novoCliente.setPago(false);
+        novoCliente = clienteComandaRepository.save(novoCliente);
+
+        System.out.println("✅ Cliente '" + nomeCliente + "' adicionado à comanda " + comandaId);
+
+        return novoCliente;
+    }
+
+    // ========== REMOVER ITEM COM JUSTIFICATIVA ==========
+
+    @Transactional
+    public RemoverItemResponse removerItemComJustificativa(
+            Long comandaId,
+            Long clienteComandaId,
+            Long itemId,
+            String justificativa,
+            String removidoPor,
+            Long companyId
+    ) {
+        // 1. Buscar o item
+        ComandaItem item = comandaItemRepository.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item não encontrado"));
+
+        // 2. Verificar se pertence à comanda
+        if (!item.getComanda().getId().equals(comandaId)) {
+            throw new RuntimeException("Item não pertence a esta comanda");
+        }
+
+        // 3. Verificar se pertence ao cliente
+        if (item.getClienteComanda() == null || !item.getClienteComanda().getId().equals(clienteComandaId)) {
+            throw new RuntimeException("Item não pertence a este cliente");
+        }
+
+        // 4. Verificar se a comanda está aberta
+        Comanda comanda = item.getComanda();
+        if (comanda.getStatus() != StatusComanda.ABERTA) {
+            throw new RuntimeException("Comanda já foi fechada ou paga. Não é possível remover itens.");
+        }
+
+        // 5. Verificar se a empresa é a mesma
+        if (!comanda.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Item não pertence à sua empresa");
+        }
+
+        // 6. Guardar informações do item para resposta
+        String produtoNome = item.getProduto().getNome();
+        Integer quantidadeRemovida = item.getQuantidade();
+        BigDecimal precoUnitario = item.getPrecoUnitario();
+        BigDecimal precoTotalRemovido = item.getPrecoTotal();
+        String clienteNome = item.getClienteComanda().getNome();
+
+        // 7. Devolver produto ao estoque
+        Produto produto = item.getProduto();
+        produto.setQuantidade(produto.getQuantidade() + item.getQuantidade());
+        produtoRepository.save(produto);
+
+        // 8. Remover o item da comanda
+        comandaItemRepository.delete(item);
+
+        // 9. Atualizar valor do cliente
+        ClienteComanda cliente = item.getClienteComanda();
+        cliente.setValorTotal(cliente.getValorTotal().subtract(precoTotalRemovido));
+        clienteComandaRepository.save(cliente);
+
+        // 10. Atualizar valor da comanda
+        comanda.setValorTotal(comanda.getValorTotal().subtract(precoTotalRemovido));
+        comandaRepository.save(comanda);
+
+        // 11. Construir resposta
+        return RemoverItemResponse.builder()
+                .message("✅ Item removido com sucesso!")
+                .produtoNome(produtoNome)
+                .quantidadeRemovida(quantidadeRemovida)
+                .precoUnitario(precoUnitario)
+                .precoTotal(precoTotalRemovido)
+                .clienteNome(clienteNome)
+                .justificativa(justificativa)
+                .removidoPor(removidoPor)
+                .build();
     }
 
     public BigDecimal calcularTotalDoDia(Long companyId) {
@@ -554,7 +679,6 @@ public class ComandaService {
         mesa.setIsOcupada(false);
         mesaRepository.save(mesa);
     }
-
 
     @Transactional
     public void limparMesaCompleta(Long mesaId, Long companyId) {
@@ -856,24 +980,52 @@ public class ComandaService {
             throw new RuntimeException("Estoque insuficiente");
         }
 
-        produto.setQuantidade(produto.getQuantidade() - quantidade);
-        produtoRepository.save(produto);
+        List<ComandaItem> itensExistentes = comandaItemRepository.findByComandaId(comandaId);
+        ComandaItem itemExistente = itensExistentes.stream()
+                .filter(item -> item.getClienteComanda() != null &&
+                        item.getClienteComanda().getId().equals(clienteComandaId) &&
+                        item.getProduto().getId().equals(produtoId))
+                .findFirst()
+                .orElse(null);
 
-        ComandaItem item = new ComandaItem();
-        item.setComanda(comanda);
-        item.setProduto(produto);
-        item.setClienteComanda(clienteComanda);
-        item.setQuantidade(quantidade);
-        item.setPrecoUnitario(produto.getPreco());
-        item.calcularTotal();
+        ComandaItem item;
 
-        clienteComanda.setValorTotal(clienteComanda.getValorTotal().add(item.getPrecoTotal()));
+        if (itemExistente != null) {
+            int novaQuantidade = itemExistente.getQuantidade() + quantidade;
+            itemExistente.setQuantidade(novaQuantidade);
+            itemExistente.setPrecoTotal(itemExistente.getPrecoUnitario().multiply(BigDecimal.valueOf(novaQuantidade)));
+            item = comandaItemRepository.save(itemExistente);
+
+            BigDecimal novoValorCliente = clienteComanda.getValorTotal().add(
+                    itemExistente.getPrecoUnitario().multiply(BigDecimal.valueOf(quantidade))
+            );
+            clienteComanda.setValorTotal(novoValorCliente);
+
+            BigDecimal novoValorComanda = comanda.getValorTotal().add(
+                    itemExistente.getPrecoUnitario().multiply(BigDecimal.valueOf(quantidade))
+            );
+            comanda.setValorTotal(novoValorComanda);
+        } else {
+            produto.setQuantidade(produto.getQuantidade() - quantidade);
+            produtoRepository.save(produto);
+
+            item = new ComandaItem();
+            item.setComanda(comanda);
+            item.setProduto(produto);
+            item.setClienteComanda(clienteComanda);
+            item.setQuantidade(quantidade);
+            item.setPrecoUnitario(produto.getPreco());
+            item.calcularTotal();
+
+            clienteComanda.setValorTotal(clienteComanda.getValorTotal().add(item.getPrecoTotal()));
+            comanda.setValorTotal(comanda.getValorTotal().add(item.getPrecoTotal()));
+
+            item = comandaItemRepository.save(item);
+        }
         clienteComandaRepository.save(clienteComanda);
-
-        comanda.setValorTotal(comanda.getValorTotal().add(item.getPrecoTotal()));
         comandaRepository.save(comanda);
 
-        return comandaItemRepository.save(item);
+        return item;
     }
 
     public List<Comanda> buscarComandasAgrupadas(String identificador, TipoComanda tipo, Long companyId) {
@@ -1002,7 +1154,6 @@ public class ComandaService {
                 clientesDTO
         );
     }
-
 
     @Transactional
     public void forcarLimpezaMesa(Long mesaId, Long companyId) {

@@ -1,5 +1,6 @@
 package VynPay.Vynpay.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -20,6 +21,7 @@ public class ComandaItem {
 
     @ManyToOne
     @JoinColumn(name = "comanda_id")
+    @JsonIgnore
     private Comanda comanda;
 
     @ManyToOne
@@ -28,6 +30,7 @@ public class ComandaItem {
 
     @ManyToOne
     @JoinColumn(name = "cliente_comanda_id")
+    @JsonIgnore
     private ClienteComanda clienteComanda;
 
     private Integer quantidade;

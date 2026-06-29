@@ -920,4 +920,67 @@ public class ComandaController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
+
+
+    // ========== ADICIONAR CLIENTE À COMANDA ==========
+
+    @PostMapping("/{comandaId}/adicionar-cliente")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> adicionarClienteNaComanda(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId,
+            @RequestBody AdicionarClienteRequest request
+    ) {
+        try {
+            ClienteComanda cliente = comandaService.adicionarClienteNaComanda(
+                    comandaId,
+                    request.getNome(),
+                    admin.getCompany().getId()
+            );
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "✅ Cliente adicionado com sucesso!");
+            response.put("clienteId", cliente.getId());
+            response.put("nome", cliente.getNome());
+            response.put("comandaId", comandaId);
+            response.put("totalClientes", comandaService.listarClientesDaComanda(comandaId, admin.getCompany().getId()).size());
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+// ========== REMOVER ITEM COM JUSTIFICATIVA ==========
+
+    @DeleteMapping("/{comandaId}/cliente/{clienteComandaId}/item/{itemId}/remover")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> removerItemComJustificativa(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long comandaId,
+            @PathVariable Long clienteComandaId,
+            @PathVariable Long itemId,
+            @RequestBody RemoverItemRequest request
+    ) {
+        try {
+            RemoverItemResponse response = comandaService.removerItemComJustificativa(
+                    comandaId,
+                    clienteComandaId,
+                    itemId,
+                    request.getJustificativa(),
+                    admin.getEmail(),
+                    admin.getCompany().getId()
+            );
+
+            return ResponseEntity.ok(response);
+
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
 }

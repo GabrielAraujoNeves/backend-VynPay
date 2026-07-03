@@ -49,6 +49,9 @@ public class ComandaService {
     @Autowired
     private CartaoEdificacaoRepository cartaoEdificacaoRepository;
 
+    @Autowired
+    private CompanyRepository companyRepository;
+
     // ========== CLIENTES ==========
 
     @Transactional
@@ -753,6 +756,11 @@ public class ComandaService {
 
     @Transactional
     public Pulseira criarPulseira(Company company, String numeroPulseira, String nomeCliente) {
+        // Validar se contém apenas números
+        if (!numeroPulseira.matches("^[0-9]+$")) {
+            throw new RuntimeException("Número da pulseira deve conter apenas números");
+        }
+
         if (pulseiraRepository.findByNumeroPulseiraAndCompanyId(numeroPulseira, company.getId()).isPresent()) {
             throw new RuntimeException("Pulseira já existe");
         }
@@ -794,6 +802,127 @@ public class ComandaService {
         pulseira.setPulseiraAgrupadaCom(null);
         pulseiraRepository.save(pulseira);
     }
+
+    @Transactional
+    public PulseiraProdutoResponse adicionarProdutoNaPulseira(String numeroPulseira, Long produtoId, Integer quantidade, Long companyId) {
+
+        // 1. Validar se a pulseira existe e está ativa
+        Pulseira pulseira = pulseiraRepository.findByNumeroPulseiraAndCompanyId(numeroPulseira, companyId)
+                .orElseThrow(() -> new RuntimeException("Pulseira não encontrada ou inativa"));
+
+        if (!pulseira.getIsAtivo()) {
+            throw new RuntimeException("Pulseira está inativa");
+        }
+
+        // 2. Buscar produto
+        Produto produto = produtoRepository.findByIdAndCompanyId(produtoId, companyId)
+                .orElseThrow(() -> new RuntimeException("Produto não encontrado"));
+
+        if (produto.getQuantidade() < quantidade) {
+            throw new RuntimeException("Estoque insuficiente. Disponível: " + produto.getQuantidade());
+        }
+
+        // 3. Buscar comanda aberta da pulseira
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                numeroPulseira, TipoComanda.PULSEIRA, companyId);
+
+        Comanda comanda = comandas.stream()
+                .filter(c -> c.getStatus() == StatusComanda.ABERTA)
+                .findFirst()
+                .orElse(null);
+
+        // 4. Se não tiver comanda aberta, criar uma
+        if (comanda == null) {
+            String numeroComanda = "PULSEIRA-" + numeroPulseira + "-" +
+                    UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+
+            // 🔥 BUSCAR A EMPRESA
+            Company company = companyRepository.findById(companyId)
+                    .orElseThrow(() -> new RuntimeException("Empresa não encontrada"));
+
+            comanda = new Comanda();
+            comanda.setNumeroComanda(numeroComanda);
+            comanda.setTipoComanda(TipoComanda.PULSEIRA);
+            comanda.setIdentificadorComanda(numeroPulseira);
+            comanda.setCompany(company);
+            comanda.setStatus(StatusComanda.ABERTA);
+            comanda.setValorTotal(BigDecimal.ZERO);
+            comanda = comandaRepository.save(comanda);
+
+            // Criar cliente na comanda
+            ClienteComanda cliente = new ClienteComanda();
+            cliente.setNome(pulseira.getNomeCliente() != null ? pulseira.getNomeCliente() : "Cliente Pulseira " + numeroPulseira);
+            cliente.setComanda(comanda);
+            cliente.setValorTotal(BigDecimal.ZERO);
+            cliente.setPago(false);
+            cliente = clienteComandaRepository.save(cliente);
+        }
+
+        // 5. Buscar cliente da comanda
+        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+        ClienteComanda cliente = clientes.stream().findFirst()
+                .orElseThrow(() -> new RuntimeException("Cliente não encontrado na comanda"));
+
+        // 6. Verificar se o cliente já tem esse produto (para acumular)
+        List<ComandaItem> itensExistentes = comandaItemRepository.findByComandaId(comanda.getId());
+        ComandaItem itemExistente = itensExistentes.stream()
+                .filter(item -> item.getClienteComanda() != null &&
+                        item.getClienteComanda().getId().equals(cliente.getId()) &&
+                        item.getProduto().getId().equals(produtoId))
+                .findFirst()
+                .orElse(null);
+
+        BigDecimal precoTotal;
+        ComandaItem item;
+
+        if (itemExistente != null) {
+            // Produto já existe - atualizar quantidade
+            int novaQuantidade = itemExistente.getQuantidade() + quantidade;
+            itemExistente.setQuantidade(novaQuantidade);
+            itemExistente.setPrecoTotal(itemExistente.getPrecoUnitario().multiply(BigDecimal.valueOf(novaQuantidade)));
+            item = comandaItemRepository.save(itemExistente);
+            precoTotal = item.getPrecoUnitario().multiply(BigDecimal.valueOf(quantidade));
+
+            // Atualizar valor do cliente
+            cliente.setValorTotal(cliente.getValorTotal().add(precoTotal));
+
+            // Atualizar valor da comanda
+            comanda.setValorTotal(comanda.getValorTotal().add(precoTotal));
+        } else {
+            // Produto novo - criar item
+            produto.setQuantidade(produto.getQuantidade() - quantidade);
+            produtoRepository.save(produto);
+
+            item = new ComandaItem();
+            item.setComanda(comanda);
+            item.setProduto(produto);
+            item.setClienteComanda(cliente);
+            item.setQuantidade(quantidade);
+            item.setPrecoUnitario(produto.getPreco());
+            item.calcularTotal();
+            item = comandaItemRepository.save(item);
+
+            precoTotal = item.getPrecoTotal();
+
+            cliente.setValorTotal(cliente.getValorTotal().add(precoTotal));
+            comanda.setValorTotal(comanda.getValorTotal().add(precoTotal));
+        }
+
+        clienteComandaRepository.save(cliente);
+        comandaRepository.save(comanda);
+
+        // 7. Retornar resposta
+        return PulseiraProdutoResponse.builder()
+                .message("✅ Produto adicionado à pulseira com sucesso!")
+                .numeroPulseira(numeroPulseira)
+                .nomeCliente(pulseira.getNomeCliente())
+                .produtoNome(produto.getNome())
+                .quantidade(quantidade)
+                .precoTotal(precoTotal)
+                .novoSaldo(cliente.getValorTotal())
+                .build();
+    }
+
 
     // ========== CARTÕES DE EDIFICAÇÃO ==========
 

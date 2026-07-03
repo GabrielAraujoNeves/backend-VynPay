@@ -1,5 +1,6 @@
 package VynPay.Vynpay.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;  // ← IMPORTAÇÃO NECESSÁRIA
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -29,6 +30,7 @@ public class Pulseira {
     @Column(name = "is_ativo")
     private Boolean isAtivo = true;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id")
     private Company company;

@@ -276,6 +276,36 @@ public class ComandaController {
         }
     }
 
+    @PostMapping("/pulseira/produto")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> adicionarProdutoNaPulseira(
+            @AuthenticationPrincipal usuario admin,
+            @RequestBody AdicionarProdutoPulseiraRequest request
+    ) {
+        try {
+            // Validar formato (apenas números)
+            if (!request.getNumeroPulseira().matches("^[0-9]+$")) {
+                Map<String, String> error = new HashMap<>();
+                error.put("error", "Número da pulseira deve conter apenas números");
+                return ResponseEntity.badRequest().body(error);
+            }
+
+            PulseiraProdutoResponse response = comandaService.adicionarProdutoNaPulseira(
+                    request.getNumeroPulseira(),
+                    request.getProdutoId(),
+                    request.getQuantidade(),
+                    admin.getCompany().getId()
+            );
+
+            return ResponseEntity.ok(response);
+
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
     // ========== CARTÕES DE EDIFICAÇÃO ==========
 
     @PostMapping("/cartoes")

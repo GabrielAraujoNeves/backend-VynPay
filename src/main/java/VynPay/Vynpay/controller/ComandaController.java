@@ -1013,4 +1013,46 @@ public class ComandaController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
+
+    // ========== PAGAR PULSEIRA POR NÚMERO ==========
+
+    @PostMapping("/pulseira/pagar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> pagarPulseiraPorNumero(
+            @AuthenticationPrincipal usuario admin,
+            @RequestBody PagarPulseiraRequest request
+    ) {
+        try {
+            // Validar formato (apenas números)
+            if (!request.getNumeroPulseira().matches("^[0-9]+$")) {
+                Map<String, String> error = new HashMap<>();
+                error.put("error", "Número da pulseira deve conter apenas números");
+                return ResponseEntity.badRequest().body(error);
+            }
+
+            // Converter forma de pagamento
+            FormaPagamento forma;
+            try {
+                forma = FormaPagamento.valueOf(request.getFormaPagamento());
+            } catch (IllegalArgumentException e) {
+                Map<String, String> error = new HashMap<>();
+                error.put("error", "Forma de pagamento inválida. Use: DINHEIRO, CARTAO_CREDITO, CARTAO_DEBITO ou PIX");
+                return ResponseEntity.badRequest().body(error);
+            }
+
+            PagarPulseiraResponse response = comandaService.pagarPulseiraPorNumero(
+                    request.getNumeroPulseira(),
+                    request.getValorPago(),
+                    forma,
+                    admin.getCompany().getId()
+            );
+
+            return ResponseEntity.ok(response);
+
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
 }

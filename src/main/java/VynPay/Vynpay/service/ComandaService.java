@@ -52,6 +52,11 @@ public class ComandaService {
     @Autowired
     private CompanyRepository companyRepository;
 
+    private boolean verificarTodosClientesPagos(Long comandaId) {
+        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
+        return clientes.stream().allMatch(c -> Boolean.TRUE.equals(c.getPago()));
+    }
+
     // ========== CLIENTES ==========
 
     @Transactional
@@ -252,10 +257,40 @@ public class ComandaService {
         pagamento.setDataPagamento(LocalDateTime.now());
         pagamentoRepository.save(pagamento);
 
+        //  NOVO: VERIFICAR SE É PULSEIRA E LIMPAR
+        if (comanda.getTipoComanda() == TipoComanda.PULSEIRA) {
+            // Remover pagamentos
+            List<Pagamento> pagamentos = pagamentoRepository.findByComandaId(comandaId);
+            if (!pagamentos.isEmpty()) {
+                pagamentoRepository.deleteAll(pagamentos);
+            }
+
+            // Remover itens
+            List<ComandaItem> itens = comandaItemRepository.findByComandaId(comandaId);
+            if (!itens.isEmpty()) {
+                comandaItemRepository.deleteAll(itens);
+            }
+
+            // Remover cliente da comanda
+            clienteComandaRepository.delete(cliente);
+
+            // Fechar comanda
+            comanda.setStatus(StatusComanda.PAGA);
+            comanda.setDataFechamento(LocalDateTime.now());
+            comanda.setValorTotal(BigDecimal.ZERO);
+            comandaRepository.save(comanda);
+
+            System.out.println(" Pulseira " + comanda.getIdentificadorComanda() + " limpa após pagamento!");
+
+            // Retornar pagamento (não precisa verificar outros clientes)
+            return pagamento;
+        }
+
+        // 🔥 SE FOR MESA, VERIFICAR SE TODOS PAGARAM
         List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
         boolean todosPagos = true;
 
-        System.out.println("🔍 Verificando clientes da comanda " + comandaId + ":");
+        System.out.println(" Verificando clientes da comanda " + comandaId + ":");
         for (ClienteComanda c : clientes) {
             boolean pago = Boolean.TRUE.equals(c.getPago());
             System.out.println("  - " + c.getNome() + ": pago = " + pago);
@@ -264,7 +299,7 @@ public class ComandaService {
             }
         }
 
-        System.out.println("✅ Todos pagaram? " + todosPagos);
+        System.out.println("Todos pagaram? " + todosPagos);
 
         if (todosPagos) {
             System.out.println(" Todos pagaram! Fechando comanda e liberando mesa...");
@@ -276,15 +311,10 @@ public class ComandaService {
                 liberarMesaPorComanda(comanda, companyId);
             }
         } else {
-            System.out.println("⏳ Ainda há clientes pendentes...");
+            System.out.println(" Ainda há clientes pendentes...");
         }
 
         return pagamento;
-    }
-
-    private boolean verificarTodosClientesPagos(Long comandaId) {
-        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comandaId);
-        return clientes.stream().allMatch(c -> Boolean.TRUE.equals(c.getPago()));
     }
 
     // ========== PAGAMENTO CONJUNTO ==========
@@ -346,6 +376,147 @@ public class ComandaService {
         }
 
         return pagamentos;
+    }
+
+    // ========== PAGAR PULSEIRA POR NÚMERO ==========
+
+    @Transactional
+    public PagarPulseiraResponse pagarPulseiraPorNumero(String numeroPulseira, BigDecimal valorPago, FormaPagamento formaPagamento, Long companyId) {
+
+        // 1. Validar se a pulseira existe
+        Pulseira pulseira = pulseiraRepository.findByNumeroPulseiraAndCompanyId(numeroPulseira, companyId)
+                .orElseThrow(() -> new RuntimeException("Pulseira não encontrada"));
+
+        // 2. Buscar comanda aberta da pulseira
+        List<Comanda> comandas = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                numeroPulseira, TipoComanda.PULSEIRA, companyId);
+
+        Comanda comanda = comandas.stream()
+                .filter(c -> c.getStatus() == StatusComanda.ABERTA)
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Nenhuma comanda aberta encontrada para esta pulseira"));
+
+        // 3. Buscar cliente da comanda
+        List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+        if (clientes.isEmpty()) {
+            throw new RuntimeException("Nenhum cliente encontrado na comanda");
+        }
+
+        ClienteComanda cliente = clientes.get(0);
+
+        // 4. Verificar se a pulseira está agrupada
+        List<Pulseira> pulseirasAgrupadas = pulseiraRepository.findByPulseiraAgrupadaCom(numeroPulseira);
+        boolean isAgrupada = !pulseirasAgrupadas.isEmpty();
+
+        // 5. Se estiver agrupada, pagar todas
+        if (isAgrupada) {
+            // Adicionar a pulseira principal na lista
+            List<String> pulseirasParaPagar = new ArrayList<>();
+            pulseirasParaPagar.add(numeroPulseira);
+
+            // Adicionar as agrupadas
+            for (Pulseira p : pulseirasAgrupadas) {
+                pulseirasParaPagar.add(p.getNumeroPulseira());
+            }
+
+            // Pagar todas
+            int totalPagas = 0;
+            BigDecimal valorTotal = BigDecimal.ZERO;
+
+            for (String numPulseira : pulseirasParaPagar) {
+                // Buscar comanda de cada pulseira
+                List<Comanda> comandasPulseira = comandaRepository.findByIdentificadorAndTipoAndCompanyId(
+                        numPulseira, TipoComanda.PULSEIRA, companyId);
+
+                Comanda c = comandasPulseira.stream()
+                        .filter(cmd -> cmd.getStatus() == StatusComanda.ABERTA)
+                        .findFirst()
+                        .orElse(null);
+
+                if (c != null) {
+                    // Buscar cliente da comanda
+                    List<ClienteComanda> clientesPulseira = clienteComandaRepository.findByComandaId(c.getId());
+                    if (!clientesPulseira.isEmpty()) {
+                        ClienteComanda cli = clientesPulseira.get(0);
+
+                        // Marcar como pago
+                        cli.setPago(Boolean.TRUE);
+                        cli.setDataPagamento(LocalDateTime.now());
+                        clienteComandaRepository.save(cli);
+
+                        // Registrar pagamento
+                        Pagamento pagamento = new Pagamento();
+                        pagamento.setComanda(c);
+                        pagamento.setClienteComanda(cli);
+                        pagamento.setValorPago(cli.getValorTotal());
+                        pagamento.setFormaPagamento(formaPagamento);
+                        pagamento.setDataPagamento(LocalDateTime.now());
+                        pagamentoRepository.save(pagamento);
+
+                        // Remover pagamentos, itens e cliente
+                        pagamentoRepository.deleteByComandaId(c.getId());
+                        comandaItemRepository.deleteByComandaId(c.getId());
+                        clienteComandaRepository.delete(cli);
+
+                        // Fechar comanda
+                        c.setStatus(StatusComanda.PAGA);
+                        c.setDataFechamento(LocalDateTime.now());
+                        c.setValorTotal(BigDecimal.ZERO);
+                        comandaRepository.save(c);
+
+                        valorTotal = valorTotal.add(cli.getValorTotal());
+                        totalPagas++;
+                    }
+                }
+            }
+
+            return PagarPulseiraResponse.builder()
+                    .message("✅ " + totalPagas + " pulseiras pagas com sucesso!")
+                    .numeroPulseira(numeroPulseira)
+                    .nomeCliente(pulseira.getNomeCliente())
+                    .valorPago(valorTotal)
+                    .formaPagamento(formaPagamento.name())
+                    .status("PAGA")
+                    .agrupado(true)
+                    .totalPulseirasPagas(totalPagas)
+                    .build();
+        }
+
+        // 6. Pagamento individual (não agrupada)
+        cliente.setPago(Boolean.TRUE);
+        cliente.setDataPagamento(LocalDateTime.now());
+        clienteComandaRepository.save(cliente);
+
+        // Registrar pagamento
+        Pagamento pagamento = new Pagamento();
+        pagamento.setComanda(comanda);
+        pagamento.setClienteComanda(cliente);
+        pagamento.setValorPago(valorPago);
+        pagamento.setFormaPagamento(formaPagamento);
+        pagamento.setDataPagamento(LocalDateTime.now());
+        pagamentoRepository.save(pagamento);
+
+        // Remover pagamentos, itens e cliente
+        pagamentoRepository.deleteByComandaId(comanda.getId());
+        comandaItemRepository.deleteByComandaId(comanda.getId());
+        clienteComandaRepository.delete(cliente);
+
+        // Fechar comanda
+        comanda.setStatus(StatusComanda.PAGA);
+        comanda.setDataFechamento(LocalDateTime.now());
+        comanda.setValorTotal(BigDecimal.ZERO);
+        comandaRepository.save(comanda);
+
+        return PagarPulseiraResponse.builder()
+                .message("✅ Pulseira paga com sucesso!")
+                .numeroPulseira(numeroPulseira)
+                .nomeCliente(pulseira.getNomeCliente())
+                .valorPago(valorPago)
+                .formaPagamento(formaPagamento.name())
+                .status("PAGA")
+                .agrupado(false)
+                .totalPulseirasPagas(1)
+                .build();
     }
 
     // ========== REMOVER CLIENTE DA MESA ==========
@@ -1202,25 +1373,58 @@ public class ComandaService {
         }
 
         Pagamento pagamentoPrincipal = null;
+
         for (Comanda comanda : comandas) {
+            // 1. Registrar pagamento
             Pagamento pagamento = new Pagamento();
             pagamento.setComanda(comanda);
             pagamento.setValorPago(comanda.getValorTotal());
             pagamento.setFormaPagamento(formaPagamento);
-
-            comanda.setStatus(StatusComanda.PAGA);
-            comanda.setDataFechamento(LocalDateTime.now());
-            comandaRepository.save(comanda);
-
-            if (comanda.getTipoComanda() == TipoComanda.MESA) {
-                liberarMesaPorComanda(comanda, companyId);
-            }
+            pagamento.setDataPagamento(LocalDateTime.now());
 
             if (pagamentoPrincipal == null) {
                 pagamentoPrincipal = pagamentoRepository.save(pagamento);
             } else {
                 pagamentoRepository.save(pagamento);
             }
+
+            //  SE FOR PULSEIRA, LIMPAR TUDO
+            if (comanda.getTipoComanda() == TipoComanda.PULSEIRA) {
+                // Remover pagamentos
+                List<Pagamento> pagamentos = pagamentoRepository.findByComandaId(comanda.getId());
+                if (!pagamentos.isEmpty()) {
+                    pagamentoRepository.deleteAll(pagamentos);
+                }
+
+                // Remover itens
+                List<ComandaItem> itens = comandaItemRepository.findByComandaId(comanda.getId());
+                if (!itens.isEmpty()) {
+                    comandaItemRepository.deleteAll(itens);
+                }
+
+                // Remover clientes
+                List<ClienteComanda> clientes = clienteComandaRepository.findByComandaId(comanda.getId());
+                if (!clientes.isEmpty()) {
+                    clienteComandaRepository.deleteAll(clientes);
+                }
+
+                // Fechar comanda
+                comanda.setStatus(StatusComanda.PAGA);
+                comanda.setDataFechamento(LocalDateTime.now());
+                comanda.setValorTotal(BigDecimal.ZERO);
+                comandaRepository.save(comanda);
+
+                System.out.println(" Pulseira " + comanda.getIdentificadorComanda() + " limpa após pagamento agrupado!");
+            }
+
+            //  SE FOR MESA, LIBERAR
+            if (comanda.getTipoComanda() == TipoComanda.MESA) {
+                liberarMesaPorComanda(comanda, companyId);
+            }
+
+            comanda.setStatus(StatusComanda.PAGA);
+            comanda.setDataFechamento(LocalDateTime.now());
+            comandaRepository.save(comanda);
         }
 
         return pagamentoPrincipal;

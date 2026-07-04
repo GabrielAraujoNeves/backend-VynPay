@@ -18,4 +18,5 @@ public interface ComandaItemRepository extends JpaRepository<ComandaItem, Long> 
             "GROUP BY ci.produto.id, p.nome " +
             "ORDER BY quantidadeVendida DESC")
     List<Object[]> findProdutosMaisVendidos(@Param("comandaIds") List<Long> comandaIds);
+    void deleteByComandaId(Long comandaId);
 }

@@ -6,5 +6,6 @@ import java.util.List;
 
 public interface PagamentoRepository extends JpaRepository<Pagamento, Long> {
     List<Pagamento> findByComandaId(Long comandaId);
-    void deleteByComandaId(Long comandaId);  // 🔥 ADICIONE ESTA LINHA
+    void deleteByComandaId(Long comandaId);  //  ADICIONE ESTA LINHA
+
 }

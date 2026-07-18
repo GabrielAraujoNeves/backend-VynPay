@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 public class EstoqueResponse {
     private Long id;
     private String nomeProduto;
-    private String categoria;
+    private Long categoriaId;
+    private String categoriaNome;
     private Integer quantidade;
     private String unidadeMedida;
     private Double pesoVolume;

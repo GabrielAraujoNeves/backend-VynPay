@@ -22,23 +22,30 @@ public class Estoque {
     @Column(nullable = false, length = 100)
     private String nomeProduto;
 
-    @Column(length = 50)
-    private String categoria;
+    // REMOVA este campo String categoria
+    // @Column(length = 50)
+    // private String categoria;
+
+    // ADICIONE o relacionamento com Categoria
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "categoria_id")
+    private Categoria categoria;
 
     @Column(nullable = false)
     private Integer quantidade;
 
     @Column(length = 20)
-    private String unidadeMedida; // UN, KG, L, ML, G, CX, etc.
+    private String unidadeMedida;
 
     @Column(name = "peso_volume")
-    private Double pesoVolume; // Peso em KG ou Volume em Litros
+    private Double pesoVolume;
 
     @Column(name = "preco_unitario")
     private Double precoUnitario;
 
     @Column(name = "preco_compra")
-    private Double precoCompra; // Preço que você pagou
+    private Double precoCompra;
 
     @Column(name = "estoque_minimo")
     private Integer estoqueMinimo;
@@ -47,7 +54,7 @@ public class Estoque {
     private Integer estoqueMaximo;
 
     @Column(name = "localizacao")
-    private String localizacao; // Ex: Prateleira A1, Depósito 2
+    private String localizacao;
 
     @Column(name = "fornecedor")
     private String fornecedor;
@@ -67,12 +74,12 @@ public class Estoque {
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id")
-    private Company company; // Integração com sua empresa
+    private Company company;
 
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "produto_id")
-    private Produto produto; // Link com o produto existente (opcional)
+    private Produto produto;
 
     @PrePersist
     protected void onCreate() {

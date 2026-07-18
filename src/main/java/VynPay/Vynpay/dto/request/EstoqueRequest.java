@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 @Data
 public class EstoqueRequest {
     private String nomeProduto;
-    private String categoria;
+    private Long categoriaId;  // Agora é Long (ID da categoria)
     private Integer quantidade;
     private String unidadeMedida;
     private Double pesoVolume;
@@ -19,5 +19,5 @@ public class EstoqueRequest {
     private String fornecedor;
     private LocalDateTime dataValidade;
     private String observacoes;
-    private Long produtoId; // ID do produto existente (opcional)
+    private Long produtoId;
 }

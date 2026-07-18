@@ -1,6 +1,6 @@
 package VynPay.Vynpay.service;
 
-import VynPay.Vynpay.model.CategoriaProduto;
+import VynPay.Vynpay.model.Categoria;
 import VynPay.Vynpay.model.Company;
 import VynPay.Vynpay.model.Produto;
 import VynPay.Vynpay.repository.CategoriaRepository;
@@ -21,71 +21,82 @@ public class ProdutoService {
     @Autowired
     private CategoriaRepository categoriaRepository;
 
-    // aqui vai adiciona a categoria no sistema daquele emprsa
-    @Transactional
-    public CategoriaProduto criarCategoria (Company company, String nome, String descricao) {
-      if (categoriaRepository.findByNomeAndCompanyId(nome, company.getId()).isPresent()) {
-          throw new RuntimeException("Categoria ja existe nesta empresa");
-      }
+    // ========== CATEGORIAS ==========
 
-        CategoriaProduto categoria = new CategoriaProduto();
+    @Transactional
+    public Categoria criarCategoria(Company company, String nome, String descricao) {
+        if (categoriaRepository.findByNomeAndCompanyId(nome, company.getId()).isPresent()) {
+            throw new RuntimeException("Categoria já existe nesta empresa");
+        }
+
+        Categoria categoria = new Categoria();
         categoria.setNome(nome);
         categoria.setDescricao(descricao);
         categoria.setCompany(company);
+        categoria.setIsAtivo(true);
+        // REMOVIDO: categoria.setTipoCategoria(Categoria.TipoCategoria.OUTRO);
 
         return categoriaRepository.save(categoria);
     }
 
-    // aqui vai lista as categorias daquela empresa
-    public List<CategoriaProduto> listarCategorias(Long companyId) {
-       return categoriaRepository.findByCompanyId(companyId);
+    public List<Categoria> listarCategorias(Long companyId) {
+        return categoriaRepository.findByCompanyId(companyId);
     }
 
-    //lista a categoria por Id
-    public CategoriaProduto buscarCategoriaPorId(Long categoriaId, Long companyId) {
-       return categoriaRepository.findByIdAndCompanyId(categoriaId, companyId)
-               .orElseThrow(() -> new RuntimeException("Categoria nao encontrada"));
+    public Categoria buscarCategoriaPorId(Long categoriaId, Long companyId) {
+        return categoriaRepository.findById(categoriaId)
+                .orElseThrow(() -> new RuntimeException("Categoria não encontrada"));
     }
 
-
-    //aqui vau atualiza a categoria
     @Transactional
-    public CategoriaProduto atualizarCategoria(Long categoriaId, Long companyId, String nome, String descricao) {
+    public Categoria atualizarCategoria(Long categoriaId, Long companyId, String nome, String descricao) {
+        Categoria categoria = buscarCategoriaPorId(categoriaId, companyId);
 
-       CategoriaProduto categoria = buscarCategoriaPorId(categoriaId, companyId);
+        if (!categoria.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Categoria não pertence a esta empresa");
+        }
 
-       if (nome != null && !nome.isEmpty()) {
-           if (categoriaRepository.findByNomeAndCompanyId(nome, companyId).isPresent() &&
-                   !categoria.getNome().equals(nome)) {
-               throw new RuntimeException("Já existe uma categoria com este nome");
-           }
-           categoria.setNome(nome);
-       }
-       if (descricao != null) {
-           categoria.setDescricao(descricao);
-       }
-       return categoriaRepository.save(categoria);
+        if (nome != null && !nome.isEmpty()) {
+            // Verificar se já existe outra categoria com este nome
+            categoriaRepository.findByNomeAndCompanyId(nome, companyId)
+                    .ifPresent(cat -> {
+                        if (!cat.getId().equals(categoriaId)) {
+                            throw new RuntimeException("Já existe uma categoria com este nome");
+                        }
+                    });
+            categoria.setNome(nome);
+        }
+
+        if (descricao != null) {
+            categoria.setDescricao(descricao);
+        }
+
+        return categoriaRepository.save(categoria);
     }
 
     @Transactional
     public void deletarCategoria(Long categoriaId, Long companyId) {
-        CategoriaProduto categoria = buscarCategoriaPorId(categoriaId, companyId);
+        Categoria categoria = buscarCategoriaPorId(categoriaId, companyId);
+
+        if (!categoria.getCompany().getId().equals(companyId)) {
+            throw new RuntimeException("Categoria não pertence a esta empresa");
+        }
 
         // Verificar se existem produtos nessa categoria
-        if (!categoria.getProdutos().isEmpty()) {
+        if (categoria.getProdutos() != null && !categoria.getProdutos().isEmpty()) {
             throw new RuntimeException("Não é possível deletar categoria com produtos. Mova ou delete os produtos primeiro.");
         }
 
         categoriaRepository.delete(categoria);
     }
 
-    //Produtos
+    // ========== PRODUTOS ==========
 
     @Transactional
     public Produto criarProduto(Company company, Long categoriaId, String nome, String descricao,
                                 BigDecimal preco, Integer quantidade) {
 
-        CategoriaProduto categoria = buscarCategoriaPorId(categoriaId, company.getId());
+        Categoria categoria = buscarCategoriaPorId(categoriaId, company.getId());
 
         Produto produto = new Produto();
         produto.setNome(nome);
@@ -103,7 +114,6 @@ public class ProdutoService {
     }
 
     public List<Produto> listarProdutosPorCategoria(Long categoriaId, Long companyId) {
-        // Verificar se categoria pertence à empresa
         buscarCategoriaPorId(categoriaId, companyId);
         return produtoRepository.findByCategoriaIdAndCompanyId(categoriaId, companyId);
     }
@@ -136,7 +146,7 @@ public class ProdutoService {
         }
 
         if (categoriaId != null) {
-            CategoriaProduto categoria = buscarCategoriaPorId(categoriaId, companyId);
+            Categoria categoria = buscarCategoriaPorId(categoriaId, companyId);
             produto.setCategoria(categoria);
         }
 

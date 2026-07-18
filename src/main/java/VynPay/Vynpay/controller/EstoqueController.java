@@ -200,13 +200,14 @@ public class EstoqueController {
         }
     }
 
-    @GetMapping("/categoria/{categoria}")
+    // CORRIGIDO: Agora recebe Long (ID da categoria) ao invés de String
+    @GetMapping("/categoria/{categoriaId}")
     public ResponseEntity<?> buscarPorCategoria(
             @AuthenticationPrincipal usuario admin,
-            @PathVariable String categoria
+            @PathVariable Long categoriaId
     ) {
         try {
-            List<EstoqueResponse> itens = estoqueService.buscarPorCategoria(admin.getCompany().getId(), categoria);
+            List<EstoqueResponse> itens = estoqueService.buscarPorCategoria(admin.getCompany().getId(), categoriaId);
 
             Map<String, Object> response = new HashMap<>();
             response.put("total", itens.size());

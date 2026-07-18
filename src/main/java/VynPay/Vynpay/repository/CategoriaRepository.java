@@ -1,6 +1,7 @@
 package VynPay.Vynpay.repository;
 
-import VynPay.Vynpay.model.CategoriaProduto;
+import VynPay.Vynpay.model.Categoria;
+import VynPay.Vynpay.model.Categoria.TipoCategoria;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -8,15 +9,35 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 
-public interface CategoriaRepository extends JpaRepository<CategoriaProduto, Long> {
+public interface CategoriaRepository extends JpaRepository<Categoria, Long> {
 
-    List<CategoriaProduto> findByCompanyId(Long companyId);
+    // Buscar por empresa
+    List<Categoria> findByCompanyId(Long companyId);
 
-    Optional<CategoriaProduto> findByIdAndCompanyId(Long id, Long companyId);
+    // Buscar por nome (exato)
+    Optional<Categoria> findByNomeAndCompanyId(String nome, Long companyId);
 
-    Optional<CategoriaProduto> findByNomeAndCompanyId(String nome, Long companyId);
+    // Buscar por nome contendo (case insensitive)
+    List<Categoria> findByCompanyIdAndNomeContainingIgnoreCase(Long companyId, String nome);
 
-    // ✅ CORRIGIDO: mude de "categoriaProduto" para "CategoriaProduto"
-    @Query("SELECT c FROM CategoriaProduto c LEFT JOIN FETCH c.produtos WHERE c.id = :id AND c.company.id = :companyId")
-    Optional<CategoriaProduto> findByIdWithProdutos(@Param("id") Long id, @Param("companyId") Long companyId);
+    // Buscar categorias ativas
+    List<Categoria> findByCompanyIdAndIsAtivoTrue(Long companyId);
+
+    // Buscar categorias pai (sem categoria pai)
+    List<Categoria> findByCompanyIdAndCategoriaPaiIdIsNull(Long companyId);
+
+    // Buscar categorias filhas
+    List<Categoria> findByCompanyIdAndCategoriaPaiId(Long companyId, Long categoriaPaiId);
+
+    // Buscar por tipo
+    List<Categoria> findByCompanyIdAndTipoCategoria(Long companyId, TipoCategoria tipoCategoria);
+
+    // Buscar por tipo e ativas
+    List<Categoria> findByCompanyIdAndTipoCategoriaAndIsAtivoTrue(Long companyId, TipoCategoria tipoCategoria);
+
+    // Verificar se existe categoria com mesmo nome (excluindo uma específica)
+    @Query("SELECT COUNT(c) > 0 FROM Categoria c WHERE c.company.id = :companyId AND c.nome = :nome AND c.id != :id")
+    boolean existsByNomeAndCompanyIdAndIdNot(@Param("nome") String nome,
+                                             @Param("companyId") Long companyId,
+                                             @Param("id") Long id);
 }

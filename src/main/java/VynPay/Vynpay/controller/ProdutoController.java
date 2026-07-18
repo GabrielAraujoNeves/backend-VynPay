@@ -1,11 +1,7 @@
 package VynPay.Vynpay.controller;
 
-import VynPay.Vynpay.dto.request.CategoriaRequest;
 import VynPay.Vynpay.dto.request.ProdutoRequest;
-import VynPay.Vynpay.dto.response.CategoriaResponse;
 import VynPay.Vynpay.dto.response.HappyHourConfigResponse;
-import VynPay.Vynpay.dto.response.ProdutoResponse;
-import VynPay.Vynpay.model.CategoriaProduto;
 import VynPay.Vynpay.model.Produto;
 import VynPay.Vynpay.model.usuario;
 import VynPay.Vynpay.service.HappyHourService;
@@ -36,134 +32,6 @@ public class ProdutoController {
     @Autowired
     private HappyHourService happyHourService;
 
-    // ========== CATEGORIAS ==========
-
-    @PostMapping("/categorias")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> criarCategoria(
-            @AuthenticationPrincipal usuario admin,
-            @RequestBody CategoriaRequest request
-    ) {
-        try {
-            CategoriaProduto categoria = produtoService.criarCategoria(
-                    admin.getCompany(),
-                    request.getNome(),
-                    request.getDescricao()
-            );
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Categoria criada com sucesso");
-            response.put("id", categoria.getId());
-            response.put("nome", categoria.getNome());
-            response.put("descricao", categoria.getDescricao());
-
-            return ResponseEntity.status(HttpStatus.CREATED).body(response);
-        } catch (RuntimeException e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
-    }
-
-    @GetMapping("/categorias")
-    public ResponseEntity<?> listarCategorias(@AuthenticationPrincipal usuario admin) {
-        try {
-            List<CategoriaProduto> categorias = produtoService.listarCategorias(admin.getCompany().getId());
-
-            List<CategoriaResponse> categoriasResponse = categorias.stream().map(cat -> {
-                CategoriaResponse response = new CategoriaResponse();
-                response.setId(cat.getId());
-                response.setNome(cat.getNome());
-                response.setDescricao(cat.getDescricao());
-                response.setCreatedAt(cat.getCreatedAt());
-                response.setUpdatedAt(cat.getUpdatedAt());
-                return response;
-            }).collect(Collectors.toList());
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("total", categoriasResponse.size());
-            response.put("categorias", categoriasResponse);
-
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
-    }
-
-    @GetMapping("/categorias/{categoriaId}")
-    public ResponseEntity<?> buscarCategoriaPorId(
-            @AuthenticationPrincipal usuario admin,
-            @PathVariable Long categoriaId
-    ) {
-        try {
-            CategoriaProduto categoria = produtoService.buscarCategoriaPorId(categoriaId, admin.getCompany().getId());
-
-            CategoriaResponse response = new CategoriaResponse();
-            response.setId(categoria.getId());
-            response.setNome(categoria.getNome());
-            response.setDescricao(categoria.getDescricao());
-            response.setCreatedAt(categoria.getCreatedAt());
-            response.setUpdatedAt(categoria.getUpdatedAt());
-
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
-        }
-    }
-
-    @PutMapping("/categorias/{categoriaId}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> atualizarCategoria(
-            @AuthenticationPrincipal usuario admin,
-            @PathVariable Long categoriaId,
-            @RequestBody CategoriaRequest request
-    ) {
-        try {
-            CategoriaProduto categoria = produtoService.atualizarCategoria(
-                    categoriaId,
-                    admin.getCompany().getId(),
-                    request.getNome(),
-                    request.getDescricao()
-            );
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Categoria atualizada com sucesso");
-            response.put("id", categoria.getId());
-            response.put("nome", categoria.getNome());
-            response.put("descricao", categoria.getDescricao());
-
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
-    }
-
-    @DeleteMapping("/categorias/{categoriaId}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<?> deletarCategoria(
-            @AuthenticationPrincipal usuario admin,
-            @PathVariable Long categoriaId
-    ) {
-        try {
-            produtoService.deletarCategoria(categoriaId, admin.getCompany().getId());
-
-            Map<String, String> response = new HashMap<>();
-            response.put("message", "Categoria deletada com sucesso");
-
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
-    }
-
     // ========== PRODUTOS ==========
 
     @PostMapping
@@ -188,7 +56,7 @@ public class ProdutoController {
             response.put("nome", produto.getNome());
             response.put("preco", produto.getPreco());
             response.put("quantidade", produto.getQuantidade());
-            response.put("categoria", produto.getCategoria().getNome());
+            response.put("categoria", produto.getCategoria() != null ? produto.getCategoria().getNome() : null);
 
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (RuntimeException e) {
@@ -198,14 +66,12 @@ public class ProdutoController {
         }
     }
 
-    // 🔥 LISTAR PRODUTOS - INTEGRADO COM HAPPY HOUR
     @GetMapping
     public ResponseEntity<?> listarProdutos(@AuthenticationPrincipal usuario admin) {
         try {
             List<Produto> produtos = produtoService.listarProdutos(admin.getCompany().getId());
             HappyHourConfigResponse activeConfig = happyHourService.getActiveConfig(admin.getCompany());
 
-            // Verificar se Happy Hour está ativo
             boolean isHappyHourActive = false;
             Double descontoGlobal = 0.0;
 
@@ -229,7 +95,6 @@ public class ProdutoController {
                 produtoMap.put("createdAt", produto.getCreatedAt());
                 produtoMap.put("updatedAt", produto.getUpdatedAt());
 
-                // Verificar se este produto específico está no Happy Hour
                 boolean produtoEmPromocao = false;
                 BigDecimal precoFinal = produto.getPreco();
                 Double descontoAplicado = 0.0;
@@ -255,6 +120,7 @@ public class ProdutoController {
                     categoriaInfo.put("id", produto.getCategoria().getId());
                     categoriaInfo.put("nome", produto.getCategoria().getNome());
                     categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                    categoriaInfo.put("isAtivo", produto.getCategoria().isAtivo());
                     produtoMap.put("categoria", categoriaInfo);
                 }
 
@@ -267,7 +133,7 @@ public class ProdutoController {
             response.put("isHappyHourActive", happyHourAtivo);
 
             if (happyHourAtivo) {
-                response.put("happyHourMessage", " HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! ");
+                response.put("happyHourMessage", "🔥 HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! 🔥");
             }
 
             return ResponseEntity.ok(response);
@@ -347,7 +213,7 @@ public class ProdutoController {
             response.put("isHappyHourActive", happyHourAtivo);
 
             if (happyHourAtivo) {
-                response.put("happyHourMessage", "HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! ");
+                response.put("happyHourMessage", "🔥 HAPPY HOUR ATIVO! " + descontoGlobal + "% de desconto! 🔥");
             }
 
             return ResponseEntity.ok(response);
@@ -410,6 +276,7 @@ public class ProdutoController {
                 categoriaInfo.put("id", produto.getCategoria().getId());
                 categoriaInfo.put("nome", produto.getCategoria().getNome());
                 categoriaInfo.put("descricao", produto.getCategoria().getDescricao());
+                categoriaInfo.put("isAtivo", produto.getCategoria().isAtivo());
                 response.put("categoria", categoriaInfo);
             }
 
@@ -487,6 +354,7 @@ public class ProdutoController {
             Map<String, Object> response = new HashMap<>();
             response.put("total", produtosResponse.size());
             response.put("produtos", produtosResponse);
+            response.put("isHappyHourActive", happyHourAtivo);
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -514,6 +382,8 @@ public class ProdutoController {
                 produtoMap.put("quantidade", produto.getQuantidade());
                 produtoMap.put("createdAt", produto.getCreatedAt());
                 produtoMap.put("updatedAt", produto.getUpdatedAt());
+                produtoMap.put("estoqueMinimo", minimo);
+                produtoMap.put("status", produto.getQuantidade() <= minimo ? "⚠️ ESTOQUE BAIXO" : "✅ Estoque OK");
 
                 if (produto.getCategoria() != null) {
                     Map<String, Object> categoriaInfo = new HashMap<>();
@@ -528,7 +398,7 @@ public class ProdutoController {
             Map<String, Object> response = new HashMap<>();
             response.put("total", produtosResponse.size());
             response.put("produtos", produtosResponse);
-            response.put("mensagem", produtosResponse.isEmpty() ? "Nenhum produto com estoque baixo" : "Produtos com estoque abaixo de " + minimo);
+            response.put("mensagem", produtosResponse.isEmpty() ? "✅ Nenhum produto com estoque baixo" : "⚠️ Produtos com estoque abaixo de " + minimo);
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -562,7 +432,41 @@ public class ProdutoController {
             response.put("nome", produto.getNome());
             response.put("preco", produto.getPreco());
             response.put("quantidade", produto.getQuantidade());
-            response.put("categoria", produto.getCategoria().getNome());
+            response.put("categoria", produto.getCategoria() != null ? produto.getCategoria().getNome() : null);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+    }
+
+    @PatchMapping("/{produtoId}/estoque")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> atualizarEstoque(
+            @AuthenticationPrincipal usuario admin,
+            @PathVariable Long produtoId,
+            @RequestParam Integer quantidade
+    ) {
+        try {
+            Produto produto = produtoService.buscarProdutoPorId(produtoId, admin.getCompany().getId());
+            produto.setQuantidade(quantidade);
+            produto = produtoService.atualizarProduto(
+                    produtoId,
+                    admin.getCompany().getId(),
+                    produto.getNome(),
+                    produto.getDescricao(),
+                    produto.getPreco(),
+                    quantidade,
+                    produto.getCategoria() != null ? produto.getCategoria().getId() : null
+            );
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Estoque atualizado com sucesso");
+            response.put("id", produto.getId());
+            response.put("nome", produto.getNome());
+            response.put("quantidade", produto.getQuantidade());
 
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -591,6 +495,8 @@ public class ProdutoController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
+
+    // ========== MÉTODO AUXILIAR ==========
 
     private boolean isWithinTimeRange(HappyHourConfigResponse config) {
         if (config == null || !config.getIsActive()) {

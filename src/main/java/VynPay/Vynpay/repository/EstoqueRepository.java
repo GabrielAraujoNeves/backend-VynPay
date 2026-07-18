@@ -16,8 +16,13 @@ public interface EstoqueRepository extends JpaRepository<Estoque, Long> {
     // Buscar por nome (contém)
     List<Estoque> findByCompanyIdAndNomeProdutoContainingIgnoreCase(Long companyId, String nome);
 
-    // Buscar por categoria
-    List<Estoque> findByCompanyIdAndCategoria(Long companyId, String categoria);
+    // Buscar por categoria (ID da categoria)
+    List<Estoque> findByCompanyIdAndCategoriaId(Long companyId, Long categoriaId);
+
+    // Buscar por categoria (nome da categoria)
+    @Query("SELECT e FROM Estoque e WHERE e.company.id = :companyId AND LOWER(e.categoria.nome) LIKE LOWER(CONCAT('%', :categoriaNome, '%'))")
+    List<Estoque> findByCompanyIdAndCategoriaNomeContainingIgnoreCase(@Param("companyId") Long companyId,
+                                                                      @Param("categoriaNome") String categoriaNome);
 
     // Buscar produtos com estoque baixo
     @Query("SELECT e FROM Estoque e WHERE e.company.id = :companyId AND e.estoqueMinimo IS NOT NULL AND e.quantidade <= e.estoqueMinimo")
@@ -37,7 +42,7 @@ public interface EstoqueRepository extends JpaRepository<Estoque, Long> {
     List<Estoque> findByCompanyIdAndFornecedorContainingIgnoreCase(Long companyId, String fornecedor);
 
     // Contar total de itens por categoria
-    @Query("SELECT e.categoria, SUM(e.quantidade) FROM Estoque e WHERE e.company.id = :companyId GROUP BY e.categoria")
+    @Query("SELECT e.categoria.nome, SUM(e.quantidade) FROM Estoque e WHERE e.company.id = :companyId GROUP BY e.categoria.nome")
     List<Object[]> sumQuantidadePorCategoria(@Param("companyId") Long companyId);
 
     // Buscar produtos com estoque acima do máximo
@@ -47,4 +52,8 @@ public interface EstoqueRepository extends JpaRepository<Estoque, Long> {
     // Calcular valor total do estoque por empresa
     @Query("SELECT SUM(e.precoUnitario * e.quantidade) FROM Estoque e WHERE e.company.id = :companyId")
     Double calcularValorTotalEstoque(@Param("companyId") Long companyId);
+
+    // ========== MÉTODOS REMOVIDOS ==========
+    // REMOVIDO: findProdutosEstoqueByTipoCategoria - não existe mais tipoCategoria
+    // REMOVIDO: findProdutosProdutoByTipoCategoria - não existe mais tipoCategoria
 }
